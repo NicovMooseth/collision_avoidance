@@ -1,0 +1,10 @@
+{
+  "names": {
+    "bag_player": {
+      "cmake-args": ["-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"]
+    },
+    "collision_avoidance": {
+      "cmake-args": ["-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"]
+    }
+  }
+}

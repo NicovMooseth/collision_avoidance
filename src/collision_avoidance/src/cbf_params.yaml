@@ -1,0 +1,125 @@
+# Parameter SCHEMA for cbf_node (generate_parameter_library, convention rule 3).
+# Declares every parameter: type, default, validation and a description with units.
+# The actual values for a run go in config/cbf.yaml, not here.
+cbf:
+  topics:
+    input:
+      constraints:
+        type: string
+        default_value: "/collision_avoidance/constraints"
+        description: "Half-plane constraints (shape_msgs/Plane[])."
+        read_only: true
+        validation:
+          not_empty<>: null
+      state:
+        type: string
+        default_value: "/filter/state_estimate"
+        description: "Estimated state coming from EKF"
+        read_only: true
+        validation:
+          not_empty<>: null
+      nominal_command: 
+        type: string
+        default_value: "/control_input/mux"
+        description: "Nominal input command coming from controller"
+        read_only: true
+        validation:
+          not_empty<>: null
+    output:
+      safe_command:
+        type: string
+        default_value: "/collision_avoidance/safe_command"
+        description: "Optimal input found by the safety filter"
+        read_only: true
+        validation:
+          not_empty<>: null
+
+  barrier_function:
+    R_SAFETY:
+      type: double
+      default_value: 0.25
+      description: "Safe distance from obstacle [m]"
+      validation:
+        gt<>: [0.0]
+
+    T_REACTION: 
+      type: double
+      default_value: 0.13
+      description: "Simplified input delay of the drone [s]"
+      validation:
+        gt<>: [0.0]
+
+    ALPHA:
+      type: double
+      default_value: 1.0
+      description: "class-K gain: h_dot >= -ALPHA h [1/s]"
+      validation:
+        gt<>: [0.0]
+
+    MAX_TILT:
+      type: double
+      default_value: 0.4363
+      description: "Maximum tilt angle of the drone [rad] "
+      validation:
+        bounds<>: [-0.7, 0.7]
+
+    MAX_V_Z:
+      type: double
+      default_value: 6.0
+      description: "Maximum vertical velocity [m/s]"
+      validation:
+        gt<>: [0.0]
+
+    DT:
+      type: double
+      default_value: 0.0667
+      description: "Command period (15 Hz on /control_input/mux): each sent input is applied for DT in the state prediction [s]"
+      validation:
+        gt<>: [0.0]
+
+  optimization:
+    RHO:
+      type: double
+      default_value: 1000.0
+      description: "QP weight of the slack: cost 1/2|a - a_ref|^2 + 1/2 s^2 + RHO s [-]"
+      validation:
+        gt<>: [0.0]
+
+  model:
+    C:
+      type: double
+      default_value: 0.26
+      description: "Horizontal drag coefficient [1/s]"
+      validation:
+        gt<>: [0.0]
+    omega_0:
+      type: double
+      default_value: 18.89
+      description: "Tilt-servo natural frequency [rad/s]"
+      validation:
+        gt<>: [0.0]
+    ETA:
+      type: double
+      default_value: 0.921
+      description: "Tilt-servo damping coefficient (= 2*zeta) [-]"
+      validation:
+        gt<>: [0.0]
+    TAUZ_INV:
+      type: double
+      default_value: 2.0
+      description: "Inverse time constant of the vertical velocity filter [1/s]"
+      validation:
+        gt<>: [0.0]
+    TAU_CMD:
+      type: double
+      default_value: 0.08
+      description: "Time constant of the roll/pitch command lag [s]"
+      validation:
+        gt<>: [0.0]
+    INPUT_DELAY_SEC:
+      type: double
+      default_value: 0.10
+      description: "Transport delay from command sent to drone reacting [s]"
+      validation:
+        gt<>: [0.0]
+

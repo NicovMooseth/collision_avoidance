@@ -1,0 +1,15 @@
+# Parameter VALUES for scan_to_constraint_node (convention rule 4), loaded by the launch file.
+# The top-level key must match the node name given in the node's constructor.
+# Every parameter here must be declared in src/scan_to_constraint_params.yaml.
+scan_to_constraint_node:
+  ros__parameters:
+
+    topics:
+      input:
+        points: "/rms2/lidar/points"
+      output:
+        constraints: "/collision_avoidance/constraints"
+
+    range:
+      min: 0.5
+      max: 30.0

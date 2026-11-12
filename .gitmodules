@@ -1,0 +1,3 @@
+[submodule "src/qpmad"]
+	path = src/qpmad
+	url = https://github.com/asherikov/qpmad.git

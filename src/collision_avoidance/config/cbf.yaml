@@ -1,0 +1,32 @@
+# Parameter VALUES for cbf_node (convention rule 4), loaded by the launch file.
+# The top-level key must match the node name given in the node's constructor.
+# Every parameter here must be declared in src/cbf_params.yaml.
+cbf_node:
+  ros__parameters:
+
+    topics:
+      input:
+        constraints: "/collision_avoidance/constraints"
+        state: "/filter/state_estimate"
+        nominal_command: "/control_input/mux"
+      output:
+        safe_command: "/collision_avoidance/safe_command"
+
+    barrier_function:
+      R_SAFETY: 0.25
+      T_REACTION: 0.13
+      ALPHA: 1.0
+      MAX_TILT: 0.4363 
+      MAX_V_Z: 6.0
+      DT: 0.0667   # 15 Hz
+
+    optimization:
+      RHO: 1000.0
+
+    model:
+      C: 0.26
+      omega_0: 18.89
+      ETA: 0.921
+      TAUZ_INV: 2.0
+      TAU_CMD: 0.08
+      INPUT_DELAY_SEC: 0.10

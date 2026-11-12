@@ -1,0 +1,13 @@
+# colcon output
+build/
+install/
+log/
+# stray colcon output from running colcon inside src/
+src/build/
+src/install/
+src/log/
+# packages not part of this repo
+src/bag_player/
+src/node_example/
+# editor config (machine-specific paths)
+.vscode/

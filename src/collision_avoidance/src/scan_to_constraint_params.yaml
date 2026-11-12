@@ -1,0 +1,34 @@
+# Parameter SCHEMA for scan_to_constraint_node (generate_parameter_library, convention rule 3).
+# Declares every parameter: type, default, validation and a description with units.
+# The actual values for a run go in config/scan_to_constraint.yaml, not here.
+scan_to_constraint:
+  topics:
+    input:
+      points:
+        type: string
+        default_value: "/rms2/lidar/points"
+        description: "LiDAR point cloud (sensor_msgs/PointCloud2)."
+        read_only: true
+        validation:
+          not_empty<>: null
+    output:
+      constraints:
+        type: string
+        default_value: "collision_avoidance/constraints"
+        description: "Half-plane constraints (collisition_avoidance_msgs/HalfPlaneArray)."
+        read_only: true
+        validation:
+          not_empty<>: null
+  range:
+    min:
+      type: double
+      default_value: 0.3
+      description: "Points closer than this [m] are skipped"
+      validation:
+        gt<>: [0.0]
+    max:
+      type: double
+      default_value: 30.0
+      description: "Point farther than this [m] are skipped"
+      validation:
+        gt<>: [0.0]
