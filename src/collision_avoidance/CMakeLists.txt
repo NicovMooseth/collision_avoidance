@@ -24,6 +24,7 @@ find_package(shape_msgs REQUIRED)
 find_package(collision_avoidance_msgs REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 find_package(qpmad REQUIRED)
+find_package(tf2_ros REQUIRED)
 
 # ---- Algorithm library: plain C++, no ROS ----
 add_library(${PROJECT_NAME}_core
@@ -46,7 +47,7 @@ add_executable(scan_to_constraint_app
 target_include_directories(scan_to_constraint_app PRIVATE include)
 target_link_libraries(scan_to_constraint_app ${PROJECT_NAME}_core scan_to_constraint_parameters)
 ament_target_dependencies(scan_to_constraint_app
-  rclcpp sensor_msgs nav_msgs geometry_msgs shape_msgs collision_avoidance_msgs)
+  rclcpp sensor_msgs nav_msgs geometry_msgs shape_msgs collision_avoidance_msgs tf2_ros)
 
 # # ---- Node 2: CBF safety filter ----
 add_executable(cbf_app

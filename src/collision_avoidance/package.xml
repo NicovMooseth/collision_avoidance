@@ -19,6 +19,7 @@
   <depend>shape_msgs</depend>
   <depend>collision_avoidance_msgs</depend>
   <depend>qpmad</depend>
+  <depend>tf2_ros</depend>
   <depend>generate_parameter_library</depend>
 
   <exec_depend>launch</exec_depend>

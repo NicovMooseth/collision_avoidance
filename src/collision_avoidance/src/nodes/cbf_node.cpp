@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 
 namespace {
 
@@ -34,13 +35,11 @@ ekf_estimator::StateVec toStateVec(const nav_msgs::msg::Odometry& msg) {
     x(DROLL) = roll;   x(DPITCH) = pitch;  // tilt angles
     x(WROLL) = w.x;    x(WPITCH) = w.y;    // tilt rates (body rates, close to angle rates for small tilts)
     x(YAW) = yaw;
-    x(UF_ROLL)  = roll;                    // TODO: Is this needed? How much is this affecting the dynamics
+    x(UF_ROLL)  = roll;                    // TODO: Is this needed? How much is this affecting estimation of state ~0.1 s ahead
     x(UF_PITCH) = pitch;
     return x;
 }
 
-
-// TODO: ADD TRANSFORMATION TO WORLD FRAME
 std::vector<collision_avoidance::HalfPlane> toHalfPlane(const collision_avoidance_msgs::msg::HalfPlaneArray& msg) {
     std::vector<collision_avoidance::HalfPlane> x;
     x.clear();
@@ -54,6 +53,55 @@ std::vector<collision_avoidance::HalfPlane> toHalfPlane(const collision_avoidanc
     return x;
 }
 
+/// @brief Command message -> model input. Convention (see ekf_estimator/types.hpp):
+///        roll = linear.y, pitch = linear.x, yaw_rate = angular.z, v_z = linear.z
+ekf_estimator::InputVec toInputVec(const geometry_msgs::msg::TwistStamped& msg) {
+    using namespace ekf_estimator;
+    InputVec u = InputVec::Zero();
+    u(U_ROLL)   = msg.twist.linear.y;
+    u(U_PITCH)  = msg.twist.linear.x;
+    u(YAW_RATE) = msg.twist.angular.z;
+    u(U_VEL_Z)  = msg.twist.linear.z;
+    return u;
+}
+
+/// @brief Model input -> command message, inverse of toInputVec(). The header is set by the caller.
+geometry_msgs::msg::TwistStamped toInputMsg(const ekf_estimator::InputVec& input) {
+    using namespace ekf_estimator;
+    geometry_msgs::msg::TwistStamped msg;
+    msg.twist.linear.y  = input(U_ROLL);
+    msg.twist.linear.x  = input(U_PITCH);
+    msg.twist.angular.z = input(YAW_RATE);
+    msg.twist.linear.z  = input(U_VEL_Z);
+    return msg;
+}
+
+/// @brief Generated ROS parameters -> barrier function parameters of the core library.
+collision_avoidance::BarrierFunctionParams toBarrierFunctionParams(const cbf::Params& p) {
+    collision_avoidance::BarrierFunctionParams bf;
+    bf.r_safety   = p.barrier_function.R_SAFETY;
+    bf.t_reaction = p.barrier_function.T_REACTION;
+    bf.alpha      = p.barrier_function.ALPHA;
+    bf.max_tilt   = p.barrier_function.MAX_TILT;
+    bf.max_v_z    = p.barrier_function.MAX_V_Z;
+    bf.dt         = p.barrier_function.DT;
+    bf.rho        = p.optimization.RHO;
+    return bf;
+}
+
+/// @brief Generated ROS parameters -> drone model parameters (g keeps its default).
+ekf_estimator::ModelParams toModelParams(const cbf::Params& p) {
+    ekf_estimator::ModelParams m;
+    m.C               = p.model.C;
+    m.OMEGA_0         = p.model.omega_0;
+    m.ETA             = p.model.ETA;
+    m.TAUZ_INV        = p.model.TAUZ_INV;
+    m.TAU_CMD         = p.model.TAU_CMD;
+    m.INPUT_DELAY_SEC = p.model.INPUT_DELAY_SEC;
+    return m;
+}
+
+
 }  // namespace
 
 CbfNode::CbfNode() : Node("cbf_node") {
@@ -61,13 +109,17 @@ CbfNode::CbfNode() : Node("cbf_node") {
         std::make_unique<cbf::ParamListener>(get_node_parameters_interface());
     params_ = param_listener_->get_params();
 
+    // convert the ROS parameters once into the types of the core library
+    bf_params_ = toBarrierFunctionParams(params_);
+    model_.emplace(toModelParams(params_));
+
     // PUBLISHER
     input_pub_ = create_publisher<geometry_msgs::msg::TwistStamped>(params_.topics.output.safe_command, rclcpp::QoS(10));
 
     // SUBSCRIBERS
     input_sub_ = create_subscription<geometry_msgs::msg::TwistStamped>(
         params_.topics.input.nominal_command, rclcpp::SensorDataQoS(),
-        [this](const geometry_msgs::msg::TwistStamped& msg) {controllerCallback(msg, constraints_, state_); }
+        [this](const geometry_msgs::msg::TwistStamped& msg) {controllerCallback(msg); }
     );
 
     state_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -78,20 +130,50 @@ CbfNode::CbfNode() : Node("cbf_node") {
     constraint_sub_ = create_subscription<collision_avoidance_msgs::msg::HalfPlaneArray>(
         params_.topics.input.constraints, rclcpp::SensorDataQoS(),
         [this](const collision_avoidance_msgs::msg::HalfPlaneArray& msg) {constraintCallback(msg); });
+    
 }
 
-void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& u_ref, 
-                                const std::vector<collision_avoidance::HalfPlane>& constraints, 
-                                const ekf_estimator::StateVec& state) {
-    ekf_estimator::InputVec u;
-    double slack;
+void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& msg) {
+    if (!state_) {
+        return;  // no state estimate yet: nothing to filter with
+    }
+    const rclcpp::Time t = now();
 
-    collision_avoidance::safety_filter(state, constraints, u_sent, u_ref, u, ekf_estimator::DroneModel, params_.barrier_function,)
+    // drop commands the drone already applies (sent more than INPUT_DELAY_SEC ago)
+    const rclcpp::Time cutoff = t - rclcpp::Duration::from_seconds(model_->params().INPUT_DELAY_SEC);
+    while (!pending_.empty() && pending_.front().first < cutoff) {
+        pending_.pop_front();
+    }
+    std::deque<ekf_estimator::InputVec> u_sent;
+    for (const auto& [stamp, u_pending] : pending_) {
+        u_sent.push_back(u_pending);
+    }
 
-    return; // TODO: CBF optimization
+    const ekf_estimator::InputVec u_ref = toInputVec(msg);
+
+    ekf_estimator::InputVec u = u_ref;
+    double slack = 0.0;
+    if (!collision_avoidance::safety_filter(*state_, constraints_, u_sent, u_ref, u,
+                                            *model_, bf_params_, slack)) {
+        // TODO: decide on a fallback (u_ref unchanged is sent for now)
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "CBF QP failed, sending the nominal command");
+    }
+
+    // TODO: What about yaw rate?
+    // Safety filter does initialize InputVec with Zero and not overwrite yaw_rate
+    // keep reference yaw rate
+    u(ekf_estimator::YAW_RATE) = u_ref(ekf_estimator::YAW_RATE);
+
+    auto out = toInputMsg(u);
+    out.header.stamp = t;
+    out.header.frame_id = msg.header.frame_id;
+    input_pub_->publish(out);
+
+    // remember what was sent, for the delay prediction
+    // (bag replay: the drone flew the nominal commands, so store u_ref instead of u there)
+    pending_.emplace_back(t, u);
 }
 
-// convert constraint into HalfPlane (SHOULD ALSO TRANSFORM INTO WORLD FRAME)
 void CbfNode::constraintCallback(const collision_avoidance_msgs::msg::HalfPlaneArray& msg) {
     constraints_ = toHalfPlane(msg);
 }

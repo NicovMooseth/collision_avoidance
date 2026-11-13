@@ -11,6 +11,13 @@ scan_to_constraint:
         read_only: true
         validation:
           not_empty<>: null
+      state:
+        type: string
+        default_value: "/filter/state_estimate"
+        description: "Drone state estimate in the world frame (nav_msgs/Odometry), used to transform the constraints."
+        read_only: true
+        validation:
+          not_empty<>: null
     output:
       constraints:
         type: string
@@ -32,3 +39,38 @@ scan_to_constraint:
       description: "Point farther than this [m] are skipped"
       validation:
         gt<>: [0.0]
+  tf:
+    publish:
+      type: bool
+      default_value: true
+      description: "Publish world -> body (from the state estimate) and body -> sensor (extrinsics) on TF, e.g. for RViz. Turn off if another node already publishes them."
+      read_only: true
+  state:
+    buffer_duration:
+      type: double
+      default_value: 1.0
+      description: "How long past drone poses are kept to look up the pose at scan time [s]"
+      validation:
+        gt<>: [0.0]
+    max_time_offset:
+      type: double
+      default_value: 0.05
+      description: "Maximum time between scan stamp and the nearest pose; scans without a pose this close are skipped [s]"
+      validation:
+        gt<>: [0.0]
+  extrinsics:
+    fast_lio_to_body:
+      translation:
+        type: double_array
+        default_value: [0.0, 0.0, 0.0]
+        description: "Sensor position in the body frame t_BS [m]"
+        read_only: true
+        validation:
+          fixed_size<>: [3]
+      rotation:
+        type: double_array
+        default_value: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        description: "Rotation sensor -> body R_BS, row-major 3x3 [-]"
+        read_only: true
+        validation:
+          fixed_size<>: [9]

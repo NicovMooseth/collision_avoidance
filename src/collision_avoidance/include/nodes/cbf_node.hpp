@@ -4,7 +4,10 @@
 #pragma once
 
 #include <rclcpp/rclcpp.hpp>
+#include <deque>
 #include <memory>
+#include <optional>
+#include <utility>
 
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -14,6 +17,8 @@
 
 #include "collision_avoidance/constraints.hpp"
 
+#include "collision_avoidance/cbf/cbf_filter.hpp"
+#include "ekf_estimator/drone_model.hpp"
 #include "ekf_estimator/types.hpp"
 
 class CbfNode : public rclcpp::Node {
@@ -21,9 +26,8 @@ class CbfNode : public rclcpp::Node {
         CbfNode();
 
     private:
-        void controllerCallback(const geometry_msgs::msg::TwistStamped& msg, 
-                                const std::vector<collision_avoidance::HalfPlane>& constraints, 
-                                const ekf_estimator::StateVec& state);
+        /// @brief Filter the nominal command with the CBF and publish the safe command.
+        void controllerCallback(const geometry_msgs::msg::TwistStamped& msg);
 
         void constraintCallback(const collision_avoidance_msgs::msg::HalfPlaneArray& msg);
 
@@ -39,5 +43,11 @@ class CbfNode : public rclcpp::Node {
         rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr input_pub_;
 
         std::vector<collision_avoidance::HalfPlane> constraints_;
-        ekf_estimator::StateVec state_;
+        std::optional<ekf_estimator::StateVec> state_;
+
+        collision_avoidance::BarrierFunctionParams bf_params_;
+        std::optional<ekf_estimator::DroneModel> model_;
+        /// Commands sent but not yet applied by the drone (send time, command), oldest first.
+        std::deque<std::pair<rclcpp::Time, ekf_estimator::InputVec>> pending_;
+
 };

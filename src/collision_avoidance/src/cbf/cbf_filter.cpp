@@ -50,26 +50,26 @@ namespace {
 
     /// @brief Barrier function h(x) for one half-plane: h >= 0 means safe, h < 0 means too close.
     ///
-    ///        h = n·p - (offset + r_safety) - t_reaction * v_bar - v_bar^2 / (2 * a_max)
+    ///        Convention of HalfPlane (constraints.hpp): n points towards the obstacle, safe side n·p <= offset.
     ///
-    ///        n·p - offset           distance of the drone to the plane
+    ///        h = offset - n·p - r_safety - t_reaction * v_bar - v_bar^2 / (2 * a_max)
+    ///
+    ///        offset - n·p           distance of the drone to the plane (> 0 on the safe side)
     ///        - r_safety             safety margin
     ///        - t_reaction * v_bar   distance travelled during the reaction time
     ///        - v_bar^2 / (2 a_max)  braking distance at maximum deceleration
     ///
-    ///        v_bar = max(0, -n·v) is the speed towards the plane; moving away does not reduce h.
-    ///        NOTE: these signs treat n as pointing from the obstacle towards the drone. HalfPlane in
-    ///        constraints.hpp defines n as pointing towards the obstacle (normal·x <= offset).
+    ///        v_bar = max(0, n·v) is the speed towards the plane; moving away does not reduce h.
     /// @param x current state of the drone
     /// @param constraint half-plane representing an obstacle
     /// @param bf_params barrier function parameters (r_safety, t_reaction)
     /// @param a_max [m/s^2] maximum deceleration, from max_acceleration()
     /// @return h(x) in [m]
     double compute_h(const StateVec& x, const HalfPlane& constraint, const BarrierFunctionParams& bf_params, double a_max) {
-        const Eigen::Vector3d& n = constraint.normal;
-        const double v_bar = std::max(0.0, -n.dot(x.segment<3>(VX)));  // approach speed, 0 when moving away
+        const Eigen::Vector3d& n = constraint.normal;                   // towards the obstacle
+        const double v_bar = std::max(0.0, n.dot(x.segment<3>(VX)));   // approach speed, 0 when moving away
 
-        return n.dot(x.segment<3>(PX)) - (constraint.offset + bf_params.r_safety) - bf_params.t_reaction * v_bar -
+        return constraint.offset - n.dot(x.segment<3>(PX)) - bf_params.r_safety - bf_params.t_reaction * v_bar -
            v_bar * v_bar / (2 * a_max);
     }
 
@@ -84,11 +84,11 @@ namespace {
 
     /// @brief One linear row per half-plane of the CBF condition h_dot >= -alpha * h, in the acceleration a.
     ///
-    ///        With v_n = -n·v (approach speed) and the total acceleration a - drag:
-    ///          h_dot = -v_n + gain * n·(a - drag),   gain = t_reaction + v_n / a_max
+    ///        n points towards the obstacle. With v_n = n·v (approach speed) and the total acceleration a - drag:
+    ///          h_dot = -v_n - gain * n·(a - drag),   gain = t_reaction + v_n / a_max
     ///        so  h_dot >= -alpha * h  becomes
-    ///          gain * n^T a  >=  v_n + gain * n·drag - alpha * h
-    ///          \_ A_i _/         \__________ b_i ______________/
+    ///          -gain * n^T a  >=  v_n - gain * n·drag - alpha * h
+    ///          \__ A_i ___/       \__________ b_i ______________/
     ///
     ///        Moving away (v_n <= 0): the plane is skipped if h >= 0. If h < 0 (already inside the
     ///        margin), a row with gain = t_reaction is added so the drone is pushed back out.
@@ -107,23 +107,23 @@ namespace {
         rows.b.resize(static_cast<Eigen::Index>(constraints.size()));
         Eigen::Index count = 0;  // number of rows filled so far
         for (const HalfPlane& constraint : constraints) {
-            const Eigen::Vector3d& n = constraint.normal;
-            const double v_n = -n.dot(x.segment<3>(VX));  // approach speed towards the plane
+            const Eigen::Vector3d& n = constraint.normal;  // towards the obstacle
+            const double v_n = n.dot(x.segment<3>(VX));    // approach speed towards the plane
             const double h = compute_h(x, constraint, bf_params, a_max);
             if (v_n <= 0.0) {   // check if moving away from obstacle
                 if (h >= 0.0) { // check if within safe distance of obstacle
                     continue;   // safe and moving away: no row needed
                 }
                 // inside the margin while moving away: v_bar = 0, so use t_reaction as the gain
-                rows.A.row(count) = bf_params.t_reaction * n.transpose();
-                rows.b(count) = v_n + bf_params.t_reaction * n.dot(drag_term(x.segment<3>(VX), model_params)) - bf_params.alpha * h;
+                rows.A.row(count) = -bf_params.t_reaction * n.transpose();
+                rows.b(count) = v_n - bf_params.t_reaction * n.dot(drag_term(x.segment<3>(VX), model_params)) - bf_params.alpha * h;
                 ++count;
                 continue;
             }
             // approaching: gain from the derivative of the reaction and braking distance terms
             const double gain = bf_params.t_reaction + v_n / a_max;
-            rows.A.row(count) = gain * n.transpose();
-            rows.b(count) = v_n + gain * n.dot(drag_term(x.segment<3>(VX), model_params)) - bf_params.alpha * h;
+            rows.A.row(count) = -gain * n.transpose();
+            rows.b(count) = v_n - gain * n.dot(drag_term(x.segment<3>(VX), model_params)) - bf_params.alpha * h;
             ++count;
         }
         // drop the unused rows of the skipped planes
@@ -212,7 +212,7 @@ namespace {
     /// @brief Convert a command into the acceleration it produces; inverse of to_command().
     ///          ax = g * tan(pitch),  ay = -g * tan(roll)
     ///          az = (v_z_cmd - vz_hat) * tauz_inv
-    /// @param x_hat predicted state (for the current vertical velocity)
+    /// @param x_hat predicted statonst ekf_estimator::ModelParams& model_params,e (for the current vertical velocity)
     /// @param u_ref reference command
     /// @param model_params drone model parameters (g, TAUZ_INV)
     /// @return reference acceleration a_ref [m/s^2]
