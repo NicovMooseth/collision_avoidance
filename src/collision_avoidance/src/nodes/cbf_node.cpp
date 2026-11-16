@@ -40,6 +40,7 @@ ekf_estimator::StateVec toStateVec(const nav_msgs::msg::Odometry& msg) {
     return x;
 }
 
+
 std::vector<collision_avoidance::HalfPlane> toHalfPlane(const collision_avoidance_msgs::msg::HalfPlaneArray& msg) {
     std::vector<collision_avoidance::HalfPlane> x;
     x.clear();
@@ -167,6 +168,10 @@ void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& msg) {
     auto out = toInputMsg(u);
     out.header.stamp = t;
     out.header.frame_id = msg.header.frame_id;
+
+    // pushlish slack on out.twist.angular.x
+    out.twist.angular.x = slack;
+
     input_pub_->publish(out);
 
     // remember what was sent, for the delay prediction
@@ -176,6 +181,12 @@ void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& msg) {
 
 void CbfNode::constraintCallback(const collision_avoidance_msgs::msg::HalfPlaneArray& msg) {
     constraints_ = toHalfPlane(msg);
+
+    // TEST: fixed wall at x = 20 m in map, safe side x <= 20
+    collision_avoidance::HalfPlane wall;
+    wall.normal = Eigen::Vector3d(1.0, 0.0, 0.0);   // towards the obstacle
+    wall.offset = 20.0;
+    constraints_.push_back(wall);
 }
 
 void CbfNode::stateCallback(const nav_msgs::msg::Odometry& msg) {
