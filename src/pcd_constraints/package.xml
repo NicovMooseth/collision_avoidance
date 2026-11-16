@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<!-- Package manifest: name, description and ALL dependencies.
+     Every package used in CMakeLists.txt (find_package) needs a <depend> here (rosdep key). -->
+<package format="3">
+  <name>pcd_constraints</name>
+  <version>0.1.0</version>
+  <description>Point cloud to half-plane constraints: HalfPlane type, clustering algorithm and scan_to_constraint_node.</description>
+  <maintainer email="nico@von-moos.org">nico</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>eigen</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>shape_msgs</depend>
+  <depend>collision_avoidance_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>generate_parameter_library</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
