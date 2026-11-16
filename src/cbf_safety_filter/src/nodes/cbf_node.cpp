@@ -181,12 +181,6 @@ void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& msg) {
 
 void CbfNode::constraintCallback(const collision_avoidance_msgs::msg::HalfPlaneArray& msg) {
     constraints_ = toHalfPlane(msg);
-
-    // TEST: fixed wall at x = 20 m in map, safe side x <= 20
-    pcd_constraints::HalfPlane wall;
-    wall.normal = Eigen::Vector3d(1.0, 0.0, 0.0);   // towards the obstacle
-    wall.offset = 20.0;
-    constraints_.push_back(wall);
 }
 
 void CbfNode::stateCallback(const nav_msgs::msg::Odometry& msg) {
