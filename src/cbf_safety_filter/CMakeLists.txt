@@ -15,6 +15,7 @@ endif()
 add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -44,7 +45,7 @@ add_executable(cbf_app
 )
 target_link_libraries(cbf_app ${PROJECT_NAME}_core cbf_parameters)
 ament_target_dependencies(cbf_app
-  rclcpp sensor_msgs nav_msgs geometry_msgs collision_avoidance_msgs qpmad)
+  rclcpp ament_index_cpp sensor_msgs nav_msgs geometry_msgs collision_avoidance_msgs qpmad)
 
 install(TARGETS cbf_app DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch)

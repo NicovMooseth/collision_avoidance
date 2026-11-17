@@ -7,10 +7,11 @@
 
 namespace pcd_constraints {
 
-/// @brief Half-plane constraint on the drone position x:  normal.dot(x) <= offset
+/// @brief Half-plane constraint on the drone position x, free side:  normal.dot(x) + offset >= 0
+///        (as shape_msgs/Plane: coef = [normal, offset], the plane is normal.dot(x) + offset = 0)
 struct HalfPlane {
-    Eigen::Vector3d normal;  /// < unit length, towards the obstacle
-    double offset;           /// < [m] distance from the LIDAR to the plane
+    Eigen::Vector3d normal;  /// < unit length, facing the free side (towards the LiDAR / origin, away from the obstacle)
+    double offset;           /// < [m] distance from the origin of the frame to the plane, > 0 if the origin is free
 };
 
 }  // namespace pcd_constraints

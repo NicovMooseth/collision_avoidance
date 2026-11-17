@@ -51,7 +51,8 @@ std::vector<HalfPlane> computeConstraints(const std::vector<Eigen::Vector3f>& po
     while (auto nearestP = nearestPoint(remaining, min_range, max_range)) {
         const float dist = nearestP->norm();
         remaining = removePoints(remaining, *nearestP);
-        planes.push_back({(*nearestP / dist).cast<double>(), static_cast<double>(dist)});
+        // normal facing the LiDAR: -q/|q|·x + |q| >= 0 is the side of the LiDAR
+        planes.push_back({(-*nearestP / dist).cast<double>(), static_cast<double>(dist)});
     }
     return planes;
 }

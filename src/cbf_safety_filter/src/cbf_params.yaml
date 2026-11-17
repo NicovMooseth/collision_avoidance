@@ -123,3 +123,12 @@ cbf:
       validation:
         gt<>: [0.0]
 
+  path_map:
+    type: string
+    default_value: "config/map_constraints.csv"
+    description: "CSV file with the half-plane constraints of the offline map (header nx,ny,nz,offset; one plane per row, free side n·p + offset >= 0, map frame, n facing the free side (away from the obstacle)). A relative path is relative to the share directory of cbf_safety_filter (config/ is installed there), an absolute path is used as it is."
+    read_only: true
+    validation:
+      not_empty<>: null
+    
+

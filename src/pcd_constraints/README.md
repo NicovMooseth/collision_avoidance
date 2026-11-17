@@ -14,13 +14,14 @@ transforms the planes.
 For every scan, in the sensor frame (LiDAR at the origin):
 
 1. Find the remaining point $q$ closest to the LiDAR, among the points within `range.min` … `range.max`.
-2. Put a plane through $q$, perpendicular to the ray from the LiDAR to $q$: the half-plane $n^\top p \le b$ with
-   $n = q / \lVert q \rVert$ (unit, pointing away from the LiDAR, towards the obstacle) and $b = \lVert q \rVert$.
-3. Remove all points on or behind this plane ($n^\top p \ge b - 10^{-4}$); only the points between the LiDAR and the
+2. Put a plane through $q$, perpendicular to the ray from the LiDAR to $q$: the half-plane with the free side
+   $n^\top p + b \ge 0$, with $n = -q / \lVert q \rVert$ (unit, facing the LiDAR, away from the obstacle) and
+   $b = \lVert q \rVert$.
+3. Remove all points on or behind this plane ($n^\top p + b \le 10^{-4}$); only the points between the LiDAR and the
    plane remain.
 4. Repeat from 1 until no point within the range is left.
 5. Transform the planes into the world frame with the drone pose at the scan time and the sensor → body extrinsic:
-   $n_W = R_{WS}\, n_S$, $b_W = b_S + n_W^\top p_{WS}$ (with $R_{WS} = R_{WB} R_{BS}$ and
+   $n_W = R_{WS}\, n_S$, $b_W = b_S - n_W^\top p_{WS}$ (with $R_{WS} = R_{WB} R_{BS}$ and
    $p_{WS} = R_{WB}\, t_{BS} + p_{WB}$).
 
 The intersection of all half-planes is a convex region around the LiDAR that contains none of the scan points in range.
@@ -58,9 +59,10 @@ Published with QoS depth 10 (reliable), one message per processed scan.
 
 - **`HalfPlaneArray`:** `std_msgs/Header header`, `shape_msgs/Plane[] planes`.
 - **Header:** `stamp` = stamp of the point cloud, `frame_id` = world frame (the `frame_id` of the state estimate).
-- **Planes:** `coef = [n_x, n_y, n_z, -b]` is the half-plane $n^\top p \le b$ with $n$ a unit vector pointing towards
-  the obstacle (away from the LiDAR) and $b$ the plane's offset in the world frame; the safe side is
-  `coef[0]*x + coef[1]*y + coef[2]*z + coef[3] <= 0`. This is the convention `cbf_node` expects.
+- **Planes:** `coef = [n_x, n_y, n_z, b]` is the half-plane with the free side $n^\top p + b \ge 0$, with $n$ a unit
+  vector facing the free side (towards the LiDAR, away from the obstacle) and $b$ the plane's offset in the world
+  frame; the free side is `coef[0]*x + coef[1]*y + coef[2]*z + coef[3] >= 0`. This is the convention `cbf_node`
+  expects.
 
 ### TF (only if `tf.publish` is true)
 

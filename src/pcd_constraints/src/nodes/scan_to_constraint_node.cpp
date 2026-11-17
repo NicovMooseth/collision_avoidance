@@ -112,13 +112,13 @@ std::vector<pcd_constraints::HalfPlane> ScanToConstraintNode::transformToMap(
     const Eigen::Matrix3d R_WS = T_WB.linear() * R_BS_;
     const Eigen::Vector3d p_WS = T_WB.linear() * t_BS_ + T_WB.translation();
 
-    // plane n_S·x_S <= d_S  ->  n_W·x_W <= d_W  with  n_W = R_WS n_S,  d_W = d_S + n_W·p_WS
+    // free side n_S·x_S + d_S >= 0  ->  n_W·x_W + d_W >= 0  with  n_W = R_WS n_S,  d_W = d_S - n_W·p_WS
     std::vector<pcd_constraints::HalfPlane> planes_W;
     planes_W.reserve(planes.size());
     for (const auto& plane : planes) {
         pcd_constraints::HalfPlane plane_W;
         plane_W.normal = R_WS * plane.normal;   // rotation keeps it unit length
-        plane_W.offset = plane.offset + plane_W.normal.dot(p_WS);
+        plane_W.offset = plane.offset - plane_W.normal.dot(p_WS);
         planes_W.push_back(plane_W);
     }
     return planes_W;
@@ -158,7 +158,7 @@ void ScanToConstraintNode::cloudCallback(const sensor_msgs::msg::PointCloud2& cl
         plane.coef[0] = p.normal.x();
         plane.coef[1] = p.normal.y();
         plane.coef[2] = p.normal.z();
-        plane.coef[3] = -p.offset;
+        plane.coef[3] = p.offset;  // coef = [normal, offset]: free side coef·[x, 1] >= 0
         result.planes.push_back(plane);
     }
     constraints_pub_->publish(result);

@@ -1,5 +1,15 @@
 # CBF Safety Filter
 
+# TEST
+-0.965925826,-0.258819045,0.0,5.795554958
+Plane at x = 6, rotated 15° around its local z axis 
+-1.0,0.0,0.0,6.0 
+Plane at x = 6, not rotated
+
+SET use_sim_time to false in launch file (when not using the bag)
+
+Check params in cbf.yaml (Safety distance, etc. )
+
 ## Description
 
 ROS 2 node (`cbf_node`, executable `cbf_app`) implementing a Control Barrier Function (CBF) safety filter for a quadrotor
@@ -20,16 +30,17 @@ Every nominal command runs through these steps:
 
 ## Barrier function
 
-A half-plane is given by its unit normal $n$ (pointing **towards the obstacle**) and offset $b$; the safe side is
-$n^\top p \le b$. With position $p$ and velocity $v$ of the predicted state $\hat x$ (map frame), the barrier function of
-one half-plane is
+A half-plane is given by its unit normal $n$ (facing the **free side**, i.e. towards the LiDAR / origin and away from
+the obstacle) and offset $b$; the free side is $n^\top p + b \ge 0$. With position $p$ and velocity $v$ of the predicted
+state $\hat x$ (map frame), the barrier function of one half-plane is
 
 $$
-h(x) = b - n^\top p - r_{safe} - t_r \cdot \bar v_n - \frac{\bar v_n^2}{2\,a_{max}},
-\qquad v_n = n^\top v, \qquad \bar v_n = \max(v_n, 0)
+h(x) = n^\top p + b - r_{safe} - t_r \cdot \bar v_n - \frac{\bar v_n^2}{2\,a_{max}},
+\qquad v_n = -n^\top v, \qquad \bar v_n = \max(v_n, 0)
 $$
 
-- $b - n^\top p$: distance of the drone to the plane (positive on the safe side)
+- $n^\top p + b$: distance of the drone to the plane (positive on the free side)
+- $v_n$: speed towards the plane (approach speed)
 - $r_{safe}$ (`R_SAFETY`): safety margin
 - $t_r \bar v_n$ (`T_REACTION`): distance travelled before braking starts
 - $\bar v_n^2 / (2 a_{max})$: braking distance, with $a_{max} = g \tan(\theta_{max})$ the horizontal acceleration
@@ -43,13 +54,13 @@ The drone model gives the velocity derivative $\dot v = a - d(v)$, with the acce
 command $a$ and the linear drag $d(v) = C\,[v_x, v_y, 0]^\top$ (`C`). For an approaching plane ($v_n > 0$):
 
 $$
-\dot h = -v_n - \gamma \, n^\top (a - d(v)), \qquad \gamma = t_r + \frac{v_n}{a_{max}}
+\dot h = -v_n + \gamma \, n^\top (a - d(v)), \qquad \gamma = t_r + \frac{v_n}{a_{max}}
 $$
 
 The CBF condition $\dot h \ge -\alpha h$ (linear class-$\mathcal K$ function, gain `ALPHA`) is linear in $a$:
 
 $$
--\gamma \, n^\top a \;\ge\; v_n - \gamma \, n^\top d(v) - \alpha \, h(x)
+\gamma \, n^\top a \;\ge\; v_n + \gamma \, n^\top d(v) - \alpha \, h(x)
 $$
 
 - approaching ($v_n > 0$): the row above
@@ -65,7 +76,7 @@ $a_{ref}$ (inverse of the conversion below), and the QP (solver: qpmad) is
 $$
 \begin{aligned}
 \min_{a,\,s} \quad & \tfrac12 \lVert a - a_{ref} \rVert^2 + \tfrac12 s^2 + \rho\, s \\
-\text{s.t.} \quad & -\gamma_i \, n_i^\top a + s \ge v_{n,i} - \gamma_i \, n_i^\top d(v) - \alpha \, h_i(x) \qquad \text{(one row per active plane } i) \\
+\text{s.t.} \quad & \gamma_i \, n_i^\top a + s \ge v_{n,i} + \gamma_i \, n_i^\top d(v) - \alpha \, h_i(x) \qquad \text{(one row per active plane } i) \\
 & -a_{max} \le a_x, a_y \le a_{max} \\
 & (-v_{z,max} - v_z)\,\tau_z^{-1} \le a_z \le (v_{z,max} - v_z)\,\tau_z^{-1} \\
 & s \ge 0
@@ -104,9 +115,10 @@ pending command; the barrier functions are evaluated on this predicted state $\h
 
 All subscriptions use the sensor-data QoS (best effort).
 
-- **Constraints:** a plane `coef = [n_x, n_y, n_z, d]` is the half-plane $n^\top p \le -d$, i.e. $b = -d$, with $n$ a unit
-  vector pointing towards the obstacle (as `scan_to_constraint_node` publishes them). The planes must be in the same
-  frame as the state estimate (`map`); the message's `frame_id` is not checked.
+- **Constraints:** a plane `coef = [n_x, n_y, n_z, b]` is the half-plane with the free side $n^\top p + b \ge 0$, with
+  $n$ a unit vector facing the free side (towards the LiDAR, away from the obstacle), as `scan_to_constraint_node`
+  publishes them. The planes must be in the same frame as the state estimate (`map`); the message's `frame_id` is not
+  checked.
 - **State:** converted to the 13-entry `ekf_estimator::StateVec` (`Eigen::Matrix<double, 13, 1>`, layout in
   `include/cbf_safety_filter/ekf/types.hpp`): position and linear velocity (both in the map frame), roll and pitch
   from the orientation, their rates from the angular velocity, yaw. The lagged commands `uf_roll` / `uf_pitch` are not

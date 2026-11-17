@@ -42,7 +42,8 @@ class CbfNode : public rclcpp::Node {
 
         rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr input_pub_;
 
-        std::vector<pcd_constraints::HalfPlane> constraints_;
+        std::vector<pcd_constraints::HalfPlane> constraints_;      ///< of the latest scan
+        std::vector<pcd_constraints::HalfPlane> map_constraints_;  ///< of the offline map (path_map), loaded once
         std::optional<ekf_estimator::StateVec> state_;
 
         cbf_safety_filter::BarrierFunctionParams bf_params_;

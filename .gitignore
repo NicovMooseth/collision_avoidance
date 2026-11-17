@@ -11,3 +11,5 @@ src/bag_player/
 src/node_example/
 # editor config (machine-specific paths)
 .vscode/
+# local test recordings (ros2 bag folders), not for GitHub
+wall_test*/

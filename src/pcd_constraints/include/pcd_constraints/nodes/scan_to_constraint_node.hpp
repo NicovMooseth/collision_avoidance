@@ -47,7 +47,7 @@ class ScanToConstraintNode : public rclcpp::Node {
     std::optional<Eigen::Isometry3d> poseAt(const rclcpp::Time& stamp) const;
 
     /// @brief Transform half-planes from the sensor frame into the world frame.
-    /// @param planes constraints in the sensor frame (n·x <= offset)
+    /// @param planes constraints in the sensor frame (free side n·x + offset >= 0)
     /// @param T_WB drone pose at scan time (body -> world)
     /// @return the same constraints in the world frame
     std::vector<pcd_constraints::HalfPlane> transformToMap(const std::vector<pcd_constraints::HalfPlane>& planes,
