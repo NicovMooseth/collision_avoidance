@@ -2,15 +2,18 @@
 // the CBF condition dh_i/dt >= -alpha * h_i, and the (QP) solve for the safe command.
 // File-local helpers (dynamics model, QP setup) go in the anonymous namespace.
 //
-// The decision variable is the acceleration a = [ax, ay, az] of the drone, because the CBF
-// condition is linear in a. The reference command is converted to a reference acceleration,
-// the QP finds the closest safe acceleration, and that is converted back to a command.
+// The decision variable is the acceleration a = [a_fwd, a_lat, az] of the drone in the yaw-aligned body frame
+// (x forward, y left, z up), because the CBF condition is linear in it and the tilt commands act in that frame.
+// The CBF rows are derived in the world frame (normals, velocity) and rotated into the body frame by the yaw.
+// The reference command is converted to a reference acceleration, the QP finds the closest safe acceleration,
+// and that is converted back to a command.
 
 #include "cbf_safety_filter/cbf_filter.hpp"
 
 #include <qpmad/solver.h>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <exception>
 
@@ -111,9 +114,9 @@ namespace {
             const double v_n = -n.dot(x.segment<3>(VX));   // approach speed towards the plane
             const double h = compute_h(x, constraint, bf_params, a_max);
             if (v_n <= 0.0) {   // check if moving away from obstacle
-                if (h >= 0.0) { // check if within safe distance of obstacle
-                    continue;   // safe and moving away: no row needed
-                }
+                // if (h >= 0.0) { // check if within safe distance of obstacle
+                //     continue;   // safe and moving away: no row needed
+                // }
                 // inside the margin while moving away: v_bar = 0, so use t_reaction as the gain
                 rows.A.row(count) = bf_params.t_reaction * n.transpose();
                 rows.b(count) = v_n + bf_params.t_reaction * n.dot(drag_term(x.segment<3>(VX), model_params)) - bf_params.alpha * h;
@@ -132,6 +135,21 @@ namespace {
         return rows;
     }
 
+    /// @brief Rotate the CBF rows from the world-frame acceleration a_W to the body-frame acceleration a_B.
+    ///        The tilt acceleration is generated in the yaw-aligned body frame (DroneModel::f):
+    ///          a_W = R_z(yaw) a_B   ->   A a_W = (A R_z(yaw)) a_B
+    ///        z is the same in both frames, so only the x/y columns change.
+    /// @param rows CBF rows in a_W from buildCbfRows(), rotated in place
+    /// @param yaw [rad] heading of the predicted state
+    void rotateRowsToBody(CbfRows& rows, double yaw) {
+        const double cy = std::cos(yaw);
+        const double sy = std::sin(yaw);
+        Eigen::Matrix2d R_z;  // horizontal part of R_z(yaw): body -> world
+        R_z << cy, -sy,
+               sy,  cy;
+        rows.A.leftCols<2>() = (rows.A.leftCols<2>() * R_z).eval();
+    }
+
     /// @brief Solve the safety QP for the acceleration closest to the reference.
     ///
     ///        variables z = [a (3), s (1)]
@@ -142,12 +160,12 @@ namespace {
     ///
     ///        The slack keeps the QP feasible when the constraints conflict with the input limits;
     ///        rho weights how strongly a violation is penalised.
-    /// @param a_ref reference acceleration (from the nominal command)
-    /// @param lb lower bound on a
-    /// @param ub upper bound on a
-    /// @param rows CBF rows from buildCbfRows()
+    /// @param a_ref reference acceleration (from the nominal command), body frame
+    /// @param lb lower bound on a (body frame)
+    /// @param ub upper bound on a (body frame)
+    /// @param rows CBF rows in the body-frame acceleration, from buildCbfRows() and rotateRowsToBody()
     /// @param rho weight of the slack in the cost (bf_params.rho)
-    /// @param[out] a safe acceleration
+    /// @param[out] a safe acceleration, body frame
     /// @param[out] slack slack s of the solution (0 = no constraint relaxed)
     /// @return true if qpmad found a solution
     bool solve_qp(const Eigen::Vector3d& a_ref, const Eigen::Vector3d& lb, const Eigen::Vector3d& ub, const CbfRows& rows, double rho,
@@ -188,12 +206,12 @@ namespace {
         return true;
     }
 
-    /// @brief Convert a (safe) acceleration into a command; inverse of to_acceleration().
-    ///          pitch = atan(ax / g),  roll = -atan(ay / g)
+    /// @brief Convert a (safe) body-frame acceleration into a command; inverse of to_acceleration().
+    ///          pitch = atan(a_fwd / g),  roll = -atan(a_lat / g)   (as in DroneModel::f)
     ///          v_z   = vz_hat + az / tauz_inv   (first-order vertical velocity response, TAUZ_INV)
     ///        All outputs are clamped to the command limits.
     /// @param x_hat predicted state (for the current vertical velocity)
-    /// @param a acceleration from the QP
+    /// @param a acceleration from the QP, body frame [a_fwd, a_lat, az]
     /// @param bf_params command limits (max_tilt, max_v_z)
     /// @param model_params drone model parameters (g, TAUZ_INV)
     /// @return command with pitch, roll and vertical velocity set, all other entries 0
@@ -209,13 +227,13 @@ namespace {
         return u;
     }
 
-    /// @brief Convert a command into the acceleration it produces; inverse of to_command().
-    ///          ax = g * tan(pitch),  ay = -g * tan(roll)
+    /// @brief Convert a command into the body-frame acceleration it produces; inverse of to_command().
+    ///          a_fwd = g * tan(pitch),  a_lat = -g * tan(roll)   (as in DroneModel::f)
     ///          az = (v_z_cmd - vz_hat) * tauz_inv
-    /// @param x_hat predicted statonst ekf_estimator::ModelParams& model_params,e (for the current vertical velocity)
+    /// @param x_hat predicted state (for the current vertical velocity)
     /// @param u_ref reference command
     /// @param model_params drone model parameters (g, TAUZ_INV)
-    /// @return reference acceleration a_ref [m/s^2]
+    /// @return reference acceleration a_ref [m/s^2], body frame
     Eigen::Vector3d to_acceleration(const StateVec& x_hat, const InputVec& u_ref, const ModelParams& model_params) {
         const double g = model_params.g;
         return {g * std::tan(u_ref(ekf_estimator::U_PITCH)), -g * std::tan(u_ref(ekf_estimator::U_ROLL)),
@@ -227,14 +245,17 @@ namespace {
     // Public entry point, documented in cbf_filter.hpp.
     bool safety_filter(const StateVec& x, const std::vector<HalfPlane>& constraints, const std::deque<InputVec>& u_sent,
                        const InputVec& u_ref, InputVec& u, const DroneModel& model, const BarrierFunctionParams& bf_params,
-                       double& slack) {
+                       double& slack, int& num_rows) {
 
         // 1. state at which the new command acts, 2. one CBF row per relevant half-plane
         const StateVec& x_hat = estimate_state(x, model, u_sent, bf_params.dt);
         const double a_max = max_acceleration(bf_params, model.params());  // derived from max_tilt
-        const CbfRows rows = buildCbfRows(x_hat, constraints, model.params(), bf_params, a_max);
+        CbfRows rows = buildCbfRows(x_hat, constraints, model.params(), bf_params, a_max);  // in a_W
+        rotateRowsToBody(rows, x_hat(YAW));  // the QP solves for a_B, the frame of the tilt commands
 
-        // input limits: the tilt limit (= a_max), and the v_z limit as an acceleration
+        num_rows = static_cast<int>(rows.b.size());
+
+        // input limits (body frame): the tilt limit (= a_max), and the v_z limit as an acceleration
         // (az = (v_z_cmd - vz) * TAUZ_INV, with v_z_cmd in [-max_v_z, max_v_z])
         const double tau_inv = model.params().TAUZ_INV;
         const Eigen::Vector3d lb(-a_max, -a_max, (-bf_params.max_v_z - x_hat(VZ)) * tau_inv);

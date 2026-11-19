@@ -211,15 +211,14 @@ void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& msg) {
 
     ekf_estimator::InputVec u = u_ref;
     double slack = 0.0;
+    int num_rows = 0;
     if (!cbf_safety_filter::safety_filter(*state_, constraints, u_sent, u_ref, u,
-                                            *model_, bf_params_, slack)) {
+                                            *model_, bf_params_, slack, num_rows)) {
         // TODO: decide on a fallback (u_ref unchanged is sent for now)
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "CBF QP failed, sending the nominal command");
     }
 
-    // TODO: What about yaw rate?
-    // Safety filter does initialize InputVec with Zero and not overwrite yaw_rate
-    // keep reference yaw rate
+    // keep yaw rate
     u(ekf_estimator::YAW_RATE) = u_ref(ekf_estimator::YAW_RATE);
 
     auto out = toInputMsg(u);
@@ -228,6 +227,8 @@ void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& msg) {
 
     // pushlish slack on out.twist.angular.x
     out.twist.angular.x = slack;
+    // publish num_rows on out.twist.angular.y
+    out.twist.angular.y = num_rows;
 
     input_pub_->publish(out);
 

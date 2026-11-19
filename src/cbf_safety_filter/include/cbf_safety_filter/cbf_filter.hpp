@@ -60,6 +60,6 @@ namespace cbf_safety_filter {
     /// @return true if the QP was solved and u is valid, false otherwise (caller decides on a fallback)
     bool safety_filter(const StateVec& x, const std::vector<HalfPlane>& constraints, const std::deque<InputVec>& u_sent,
                        const InputVec& u_ref, InputVec& u, const DroneModel& model, const BarrierFunctionParams& bf_params,
-                       double& slack);
+                       double& slack, int& num_rows);
 
 } // namespace cbf_safety_filter
