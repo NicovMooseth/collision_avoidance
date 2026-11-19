@@ -35,7 +35,7 @@ namespace cbf_safety_filter {
         double r_safety;    ///< [m]     extra distance kept to every half-plane
         double t_reaction;  ///< [s]     reaction time: distance travelled before braking starts is t_reaction * v
         double alpha;       ///< [1/s]   CBF gain in h_dot >= -alpha * h (larger = approaches the boundary faster)
-        double max_tilt;    ///< [rad]   limit for roll and pitch commands
+        double max_tilt;    ///< [rad]   limit of the total tilt (roll and pitch combined: tan² roll + tan² pitch <= tan² max_tilt)
         double max_v_z;     ///< [m/s]   limit for the vertical velocity command
         double dt;          ///< [s]     command period: each sent input is applied for dt in the state prediction
         double rho;         ///< [-]     QP weight of the slack s (larger = constraints are relaxed less)

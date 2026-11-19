@@ -16,7 +16,7 @@ cbf_node:
       R_SAFETY: 1.0
       T_REACTION: 0.13
       ALPHA: 1.0
-      MAX_TILT: 0.4363 # 25 deg
+      MAX_TILT: 0.2618 # 15 deg
       MAX_V_Z: 6.0
       DT: 0.0667   # 15 Hz
 

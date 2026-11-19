@@ -59,7 +59,7 @@ cbf:
     MAX_TILT:
       type: double
       default_value: 0.4363
-      description: "Maximum tilt angle of the drone [rad] "
+      description: "Maximum total tilt angle of the drone, roll and pitch combined (tan² roll + tan² pitch <= tan² MAX_TILT) [rad]"
       validation:
         bounds<>: [-0.7, 0.7]
 

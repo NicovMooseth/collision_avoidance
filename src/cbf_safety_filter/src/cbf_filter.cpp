@@ -39,15 +39,29 @@ namespace {
         return x;
     }
 
-    /// @brief Maximum horizontal acceleration the drone can produce, derived from the tilt limit.
+    /// Number of sides of the polygon that approximates the tilt limit |a_h| <= g tan(max_tilt) in the QP.
+    constexpr int N_TILT = 16;
+
+    /// @brief Radius of the tilt disc: the horizontal acceleration at the total tilt limit.
     ///        Holding altitude, the vertical thrust carries the weight (T cos θ = m g) and the horizontal
-    ///        part accelerates the drone (T sin θ = m a), so a = g * tan(θ).
-    ///        Roll and pitch are limited separately, so this is the value reachable in every horizontal direction.
+    ///        part accelerates the drone (T sin θ = m a), so a = g * tan(θ). With the model's
+    ///        a_fwd = g tan(pitch), a_lat = -g tan(roll), the total tilt θ is tan²θ = tan²(pitch) + tan²(roll),
+    ///        so θ <= max_tilt  <=>  |a_h| = sqrt(a_fwd² + a_lat²) <= g tan(max_tilt).
+    /// @param bf_params contains the tilt limit max_tilt [rad]
+    /// @param model_params contains g
+    /// @return [m/s^2]
+    double tilt_disc_radius(const BarrierFunctionParams& bf_params, const ModelParams& model_params) {
+        return model_params.g * std::tan(bf_params.max_tilt);
+    }
+
+    /// @brief Maximum horizontal acceleration reachable in every direction: the inradius of the N_TILT-gon
+    ///        inscribed in the tilt disc, a_max = g tan(max_tilt) cos(π / N_TILT) (2 % below the disc for 16 sides).
+    ///        Used as the braking deceleration in h and as the limit of the tilt rows in the QP.
     /// @param bf_params contains the tilt limit max_tilt [rad]
     /// @param model_params contains g
     /// @return a_max [m/s^2]
     double max_acceleration(const BarrierFunctionParams& bf_params, const ModelParams& model_params) {
-        return model_params.g * std::tan(bf_params.max_tilt);
+        return tilt_disc_radius(bf_params, model_params) * std::cos(M_PI / N_TILT);
     }
 
     /// @brief Barrier function h(x) for one half-plane: h >= 0 means safe, h < 0 means too close.
@@ -152,23 +166,27 @@ namespace {
 
     /// @brief Solve the safety QP for the acceleration closest to the reference.
     ///
-    ///        variables z = [a (3), s (1)]
+    ///        variables z = [a (3), s (1)],  a = [a_fwd, a_lat, az] in the body frame
     ///        min   1/2 |a - a_ref|^2 + 1/2 s^2 + rho * s
-    ///        s.t.  A a + s >= b       (CBF rows, all relaxed by the same slack s)
-    ///              lb <= a <= ub      (tilt and vertical velocity limits)
+    ///        s.t.  A a + s >= b                                  (CBF rows, all relaxed by the same slack s)
+    ///              cos(φ_k) a_fwd + sin(φ_k) a_lat <= a_max      (tilt: N_TILT-gon, φ_k = 2πk / N_TILT, no slack)
+    ///              az_min <= az <= az_max                         (vertical velocity limit)
     ///              s >= 0
     ///
-    ///        The slack keeps the QP feasible when the constraints conflict with the input limits;
+    ///        The tilt rows limit the total tilt (roll and pitch combined), not each angle on its own: the polygon
+    ///        is inscribed in the disc |a_h| <= g tan(max_tilt), so the tilt limit is never exceeded.
+    ///        The slack keeps the QP feasible when the CBF rows conflict with the input limits;
     ///        rho weights how strongly a violation is penalised.
     /// @param a_ref reference acceleration (from the nominal command), body frame
-    /// @param lb lower bound on a (body frame)
-    /// @param ub upper bound on a (body frame)
+    /// @param az_min lower bound on az
+    /// @param az_max upper bound on az
+    /// @param a_max inradius of the tilt polygon, from max_acceleration()
     /// @param rows CBF rows in the body-frame acceleration, from buildCbfRows() and rotateRowsToBody()
     /// @param rho weight of the slack in the cost (bf_params.rho)
     /// @param[out] a safe acceleration, body frame
     /// @param[out] slack slack s of the solution (0 = no constraint relaxed)
     /// @return true if qpmad found a solution
-    bool solve_qp(const Eigen::Vector3d& a_ref, const Eigen::Vector3d& lb, const Eigen::Vector3d& ub, const CbfRows& rows, double rho,
+    bool solve_qp(const Eigen::Vector3d& a_ref, double az_min, double az_max, double a_max, const CbfRows& rows, double rho,
             Eigen::Vector3d& a, double& slack) {
 
         const double inf = std::numeric_limits<double>::infinity();
@@ -180,21 +198,31 @@ namespace {
         Eigen::VectorXd h(4);
         h << -a_ref, rho;
 
-        // bounds on z: input limits for a, s >= 0
+        // bounds on z: a_fwd, a_lat free (limited by the tilt rows), az by the vertical velocity limit, s >= 0
         Eigen::VectorXd lower(4), upper(4);
-        lower << lb, 0.0;
-        upper << ub, inf;
+        lower << -inf, -inf, az_min, 0.0;
+        upper << inf, inf, az_max, inf;
 
-        // general constraints [A_rows, 1] * z >= b: the column of ones adds the slack to every row
-        Eigen::MatrixXd A(m, 4);
-        A << rows.A, Eigen::VectorXd::Ones(m);
-        // the upper bound is needed: with a lower bound alone, qpmad treats the rows as equalities
-        const Eigen::VectorXd no_limit = Eigen::VectorXd::Constant(m, inf);
+        // general constraints  A_lb <= A z <= A_ub
+        Eigen::MatrixXd A(m + N_TILT, 4);
+        Eigen::VectorXd A_lb(m + N_TILT), A_ub(m + N_TILT);
+        // CBF rows [A_rows, 1] z >= b: the column of ones adds the slack to every row. The upper bound is needed:
+        // with a lower bound alone, qpmad treats the rows as equalities
+        A.topRows(m) << rows.A, Eigen::VectorXd::Ones(m);
+        A_lb.head(m) = rows.b;
+        A_ub.head(m).setConstant(inf);
+        // tilt rows: cos(φ_k) a_fwd + sin(φ_k) a_lat <= a_max, without slack (hard limit)
+        for (int k = 0; k < N_TILT; ++k) {
+            const double phi = 2.0 * M_PI * k / N_TILT;
+            A.row(m + k) << std::cos(phi), std::sin(phi), 0.0, 0.0;
+            A_lb(m + k) = -inf;
+            A_ub(m + k) = a_max;
+        }
 
         Eigen::VectorXd z(4);
         qpmad::Solver solver;
         try {
-            if (solver.solve(z, H, h, lower, upper, A, rows.b, no_limit) != qpmad::Solver::OK) {
+            if (solver.solve(z, H, h, lower, upper, A, A_lb, A_ub) != qpmad::Solver::OK) {
                 return false;
             }
         } catch (const std::exception&) {  // for example invalid input: the slack keeps the rows feasible
@@ -209,6 +237,8 @@ namespace {
     /// @brief Convert a (safe) body-frame acceleration into a command; inverse of to_acceleration().
     ///          pitch = atan(a_fwd / g),  roll = -atan(a_lat / g)   (as in DroneModel::f)
     ///          v_z   = vz_hat + az / tauz_inv   (first-order vertical velocity response, TAUZ_INV)
+    ///        The QP keeps |a_h| inside the tilt disc already; as a numerical safety net a longer a_h is scaled
+    ///        back onto the disc (keeps its direction, unlike clamping roll and pitch on their own).
     ///        All outputs are clamped to the command limits.
     /// @param x_hat predicted state (for the current vertical velocity)
     /// @param a acceleration from the QP, body frame [a_fwd, a_lat, az]
@@ -219,9 +249,15 @@ namespace {
                         const BarrierFunctionParams& bf_params, const ModelParams& model_params) {
         const double g = model_params.g;
 
+        Eigen::Vector2d a_h = a.head<2>();  // [a_fwd, a_lat]
+        const double radius = tilt_disc_radius(bf_params, model_params);
+        if (a_h.norm() > radius) {
+            a_h *= radius / a_h.norm();
+        }
+
         InputVec u = InputVec::Zero();
-        u(ekf_estimator::U_PITCH) = std::clamp(std::atan(a.x() / g), -bf_params.max_tilt, bf_params.max_tilt);
-        u(ekf_estimator::U_ROLL) = std::clamp(-std::atan(a.y() / g), -bf_params.max_tilt, bf_params.max_tilt);
+        u(ekf_estimator::U_PITCH) = std::clamp(std::atan(a_h.x() / g), -bf_params.max_tilt, bf_params.max_tilt);
+        u(ekf_estimator::U_ROLL) = std::clamp(-std::atan(a_h.y() / g), -bf_params.max_tilt, bf_params.max_tilt);
         u(ekf_estimator::U_VEL_Z) = std::clamp(x_hat(ekf_estimator::VZ) + a.z() / model_params.TAUZ_INV,
                                             -bf_params.max_v_z, bf_params.max_v_z);
         return u;
@@ -249,21 +285,22 @@ namespace {
 
         // 1. state at which the new command acts, 2. one CBF row per relevant half-plane
         const StateVec& x_hat = estimate_state(x, model, u_sent, bf_params.dt);
-        const double a_max = max_acceleration(bf_params, model.params());  // derived from max_tilt
+        const double a_max = max_acceleration(bf_params, model.params());  // reachable in every direction, from max_tilt
         CbfRows rows = buildCbfRows(x_hat, constraints, model.params(), bf_params, a_max);  // in a_W
         rotateRowsToBody(rows, x_hat(YAW));  // the QP solves for a_B, the frame of the tilt commands
 
         num_rows = static_cast<int>(rows.b.size());
 
-        // input limits (body frame): the tilt limit (= a_max), and the v_z limit as an acceleration
-        // (az = (v_z_cmd - vz) * TAUZ_INV, with v_z_cmd in [-max_v_z, max_v_z])
+        // input limits (body frame): the total tilt (polygon with inradius a_max, in solve_qp), and the v_z limit
+        // as an acceleration (az = (v_z_cmd - vz) * TAUZ_INV, with v_z_cmd in [-max_v_z, max_v_z])
         const double tau_inv = model.params().TAUZ_INV;
-        const Eigen::Vector3d lb(-a_max, -a_max, (-bf_params.max_v_z - x_hat(VZ)) * tau_inv);
-        const Eigen::Vector3d ub(a_max, a_max, (bf_params.max_v_z - x_hat(VZ)) * tau_inv);
+        const double az_min = (-bf_params.max_v_z - x_hat(VZ)) * tau_inv;
+        const double az_max = (bf_params.max_v_z - x_hat(VZ)) * tau_inv;
 
         // 3. closest safe acceleration to the reference
         Eigen::Vector3d a;
-        if (!solve_qp(to_acceleration(x_hat, u_ref, model.params()), lb, ub, rows, bf_params.rho, a, slack)) {
+        if (!solve_qp(to_acceleration(x_hat, u_ref, model.params()), az_min, az_max, a_max, rows, bf_params.rho, a,
+                      slack)) {
             return false;  // u is left unchanged
         }
         // 4. back to a command
