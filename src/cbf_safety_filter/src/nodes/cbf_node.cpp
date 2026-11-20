@@ -4,7 +4,7 @@
 
 #include "cbf_safety_filter/cbf_filter.hpp"
 
-#include "clustering.hpp"  // MapObstacle, LidarObstacle, loadMapObstacles
+#include "clustering/clustering.hpp"  // MapObstacle, LidarObstacle, loadMapObstacles
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
