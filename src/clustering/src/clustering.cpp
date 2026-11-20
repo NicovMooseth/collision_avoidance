@@ -1,9 +1,10 @@
-#include "clustering.hpp"
+#include "clustering/clustering.hpp"
 
 #include <Eigen/Core>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <fstream>
 #include <iostream>
@@ -12,6 +13,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <optional>
 
 namespace clustering {
 
@@ -26,11 +28,35 @@ bool insideObstacle(const std::vector<HalfPlane>& planes, const Eigen::Vector3d&
     return true;
 }
 
-bool insideAnyObstacle(const Obstacles& obstacles, const Eigen::Vector3d& point) {
-    for (const auto& obs : obstacles.obstacles) 
-        if (insideObstacle(obs, point))
+bool insideObstacle(const MapObstacle& obstacle, const Eigen::Vector3d& p, const double eps) {
+    return insideObstacle(obstacle.planes, p, eps);
+}
+
+bool insideObstacle(const LidarObstacle& obstacle, const Eigen::Vector3d& p, const double eps) {
+    return insideObstacle(obstacle.planes, p, eps);
+}
+
+namespace {
+
+// the same loop for both obstacle vectors (std::vector<MapObstacle>, std::vector<LidarObstacle>)
+template <typename ObstacleT>
+bool insideAny(const std::vector<ObstacleT>& obstacles, const Eigen::Vector3d& p, const double eps) {
+    for (const ObstacleT& obstacle : obstacles) {
+        if (insideObstacle(obstacle, p, eps)) {
             return true;
+        }
+    }
     return false;
+}
+
+}  // namespace
+
+bool insideAnyObstacle(const MapObstacles& obstacles, const Eigen::Vector3d& p, const double eps) {
+    return insideAny(obstacles.map_obstacle, p, eps);
+}
+
+bool insideAnyObstacle(const LidarObstacles& obstacles, const Eigen::Vector3d& p, const double eps) {
+    return insideAny(obstacles.lidar_obstacles, p, eps);
 }
 
 void removeKnownPoints(const Obstacles& obstacles, std::vector<Eigen::Vector3d>& points) {
@@ -82,9 +108,63 @@ MapObstacles loadMapObstacles(const std::string& path) {
         }
         map_obstacles.map_obstacle[entry->second].planes.push_back({normal / length, value[3] / length});
     }
+
+    const std::vector<int> removed = obstacleFeasibilityCheck(map_obstacles);
+    if (!removed.empty()) {
+        std::cerr << path << ": " << removed.size() << " obstacle(s) are not closed and were removed, IDs:";
+        for (const int id : removed) {
+            std::cerr << ' ' << id;
+        }
+        std::cerr << '\n';
+    }
+
     return map_obstacles;
 }
 
+bool isClosedObstacle(const MapObstacle& obstacle, const double horizontal_tol_deg) {
+    const double cos_tol = std::cos(horizontal_tol_deg * M_PI / 180.0);
+    bool has_top = false;
+    bool has_bottom = false;
+    std::vector<double> side_angles;  // direction of each side normal seen from above [rad]
+    for (const HalfPlane& hp : obstacle.planes) {
+        const Eigen::Vector3d& n = hp.normal;  // unit length (loadMapObstacles), out of the obstacle
+        if (n.z() >= cos_tol) {
+            has_top = true;
+        } else if (n.z() <= -cos_tol) {
+            has_bottom = true;
+        } else {
+            side_angles.push_back(std::atan2(n.y(), n.x()));
+        }
+    }
+    if (!has_top || !has_bottom || side_angles.size() < 3) {
+        return false;
+    }
+
+    // closed from the side iff the side normals surround the obstacle: no angular gap of 180 deg or more between
+    // neighbouring directions (otherwise the obstacle is open towards the middle of that gap). This also needs at
+    // least 3 non-parallel sides.
+    std::sort(side_angles.begin(), side_angles.end());
+    double max_gap = side_angles.front() + 2.0 * M_PI - side_angles.back();  // wrap-around gap
+    for (std::size_t i = 1; i < side_angles.size(); ++i) {
+        max_gap = std::max(max_gap, side_angles[i] - side_angles[i - 1]);
+    }
+    return max_gap < M_PI - horizontal_tol_deg * M_PI / 180.0;
+}
+
+std::vector<int> obstacleFeasibilityCheck(MapObstacles& map_obstacles, const double horizontal_tol_deg) {
+    std::vector<int> removed;
+    auto& obstacles = map_obstacles.map_obstacle;
+    obstacles.erase(std::remove_if(obstacles.begin(), obstacles.end(),
+                                   [&](const MapObstacle& obs) {
+                                       if (isClosedObstacle(obs, horizontal_tol_deg)) {
+                                           return false;
+                                       }
+                                       removed.push_back(obs.ID);
+                                       return true;
+                                   }),
+                    obstacles.end());
+    return removed;
+}
 
 // DBSCAN CLUSTERING
 constexpr int UNDEFINED = -1;  // not visited yet
@@ -96,7 +176,7 @@ std::vector<int> dbscan_fast(const std::vector<Eigen::Vector3d>& points, const f
     if (!(eps > 0.0f)) {
         throw std::invalid_argument("dbscan: eps must be positive");
     }
-    const collision_avoidance::VoxelGrid grid(points, eps);
+    const clustering::VoxelGrid grid(points, eps);
     std::vector<int> labels(points.size(), UNDEFINED);
     std::vector<int> neighbours;
     std::vector<int> to_visit;  // labelled points of this cluster whose neighbours are not checked yet

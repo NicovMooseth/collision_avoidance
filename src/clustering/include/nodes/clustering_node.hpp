@@ -8,7 +8,7 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
-#include "clustering.hpp"
+#include "clustering/clustering.hpp"
 #include "clustering/clustering_parameters.hpp"
 #include "clustering/map_parameters.hpp"
 #include "constants.h"
