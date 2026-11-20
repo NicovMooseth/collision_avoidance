@@ -44,9 +44,9 @@ add_executable(cbf_app
   app/cbf_app.cpp
   src/nodes/cbf_node.cpp
 )
-target_link_libraries(cbf_app ${PROJECT_NAME}_core cbf_parameters)
+target_link_libraries(cbf_app ${PROJECT_NAME}_core cbf_parameters clustering::clustering_core)
 ament_target_dependencies(cbf_app
-  rclcpp ament_index_cpp sensor_msgs nav_msgs geometry_msgs collision_avoidance_msgs qpmad clustering)
+  rclcpp ament_index_cpp sensor_msgs nav_msgs geometry_msgs collision_avoidance_msgs qpmad)
 
 install(TARGETS cbf_app DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch)
