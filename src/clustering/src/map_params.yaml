@@ -1,0 +1,12 @@
+# Parameter SCHEMA of the offline map of clustering_node (generate_parameter_library), read by map_loader_.
+# Declares every map parameter: type, default, validation and a description with units.
+# The actual values for a run go in config/map.yaml, not here.
+clustering_map:
+  map:
+    path:
+      type: string
+      default_value: "config/map_obstacles.csv"
+      description: "CSV file with the obstacles of the offline map: header nx,ny,nz,offset,obstacle; one half-plane per row (map frame, n facing the free side, i.e. out of the obstacle, free side n·p + offset >= 0); rows with the same obstacle index form one convex obstacle. A relative path is relative to the share directory of clustering (config/ is installed there), an absolute path is used as it is."
+      read_only: true
+      validation:
+        not_empty<>: null

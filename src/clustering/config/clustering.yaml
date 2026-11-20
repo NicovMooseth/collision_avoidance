@@ -1,0 +1,27 @@
+# Parameter VALUES for clustering_node, loaded by the launch file (together with config/map.yaml).
+# The top-level key must match the node name given in the node's constructor.
+# Every parameter here must be declared in src/clustering_params.yaml.
+clustering_node:
+  ros__parameters:
+
+    topics:
+      input:
+        points: "/rms2/lidar/points"
+        state: "/filter/state_estimate"
+
+    state:
+      buffer_duration: 1.0    # clouds arrive ~0.12 s after their stamp
+      max_time_offset: 0.05   # states come at 50 Hz: nearest one is <= 10 ms away
+
+    # Sensor -> body extrinsic T_BS, same as config/scan_to_constraint.yaml of pcd_constraints
+    extrinsics:
+      fast_lio_to_body:
+        translation: [0.0, 0.0, 0.0]   # the LiDAR is taken as the drone's center
+        rotation:
+          [0.00000000, -0.02565353,  0.99967089,
+           0.99999986, -0.00052343, -0.00001343,
+           0.00052360,  0.99967076,  0.02565352]
+           
+    dbscan:
+      eps: 0.3
+      min_points: 15

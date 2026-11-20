@@ -1,14 +1,7 @@
 # CBF Safety Filter
 
-# TEST
--0.965925826,-0.258819045,0.0,5.795554958
-Plane at x = 6, rotated 15° around its local z axis 
--1.0,0.0,0.0,6.0 
-Plane at x = 6, not rotated
-
-SET use_sim_time to false in launch file (when not using the bag)
-
-Check params in cbf.yaml (Safety distance, etc. )
+# Known Issues
+Oszillating behaviour when initializing the drone within an unsafe region to an obstacle
 
 ## Description
 
@@ -24,9 +17,26 @@ constraints and sent commands.
 Every nominal command runs through these steps:
 
 1. predict the state $\hat x$ at which the new command takes effect (input delay, see [State prediction](#state-prediction))
-2. build one linear CBF row per half-plane, in the acceleration $a$
+2. build one linear CBF row per obstacle, in the acceleration $a$ (see [Obstacles](#obstacles))
 3. solve a QP for the acceleration closest to the one of the nominal command
 4. convert the safe acceleration back to a command and publish it
+
+## Obstacles
+
+The filter works on convex obstacles (`cbf_safety_filter::Obstacle`: planes + velocity, map frame). An obstacle is the
+intersection of the obstacle sides of its half-planes; the normals point out of the obstacle (free side
+$n^\top p + b \ge 0$). The node collects them from three sources and converts them into this type:
+
+| source | type in the node | ID |
+|---|---|---|
+| offline map, CSV `path_map` (`nx,ny,nz,offset,obstacle`), loaded once with `clustering::loadMapObstacles` | `clustering::MapObstacle` | obstacle column of the CSV |
+| clustering node (TODO: message and subscriber) | `clustering::LidarObstacle` (with velocity) | from the clustering node |
+| `scan_to_constraint_node`, topic `constraints` | one obstacle per half-plane | index in the message |
+
+The drone is outside an obstacle as soon as it is on the free side of one of its planes, so the barrier function of an
+obstacle is $h_{obs} = \max_i h_i$ over its planes, and each obstacle gives one CBF row. For now the row of the active
+plane (largest $h_i$) is used (TODO: smooth maximum, moving obstacles). The barrier function and CBF row of a single
+plane are below.
 
 ## Barrier function
 

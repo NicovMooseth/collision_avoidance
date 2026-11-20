@@ -1,5 +1,6 @@
 // Declaration of cbf_node: the safety filter.
-// Subscribes to constraints, state estimate and nominal command; publishes the safe command.
+// Subscribes to obstacles (half-planes, later the clustering node), state estimate and nominal command;
+// loads the obstacles of the offline map; publishes the safe command.
 // Node headers hold only the ROS plumbing; the filter itself is cbf_safety_filter::CbfFilter.
 #pragma once
 
@@ -8,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -29,6 +31,7 @@ class CbfNode : public rclcpp::Node {
         /// @brief Filter the nominal command with the CBF and publish the safe command.
         void controllerCallback(const geometry_msgs::msg::TwistStamped& msg);
 
+        /// @brief Store the half-planes of the latest scan, each as an obstacle with one plane.
         void constraintCallback(const collision_avoidance_msgs::msg::HalfPlaneArray& msg);
 
         void stateCallback(const nav_msgs::msg::Odometry& msg);
@@ -42,8 +45,10 @@ class CbfNode : public rclcpp::Node {
 
         rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr input_pub_;
 
-        std::vector<pcd_constraints::HalfPlane> constraints_;      ///< of the latest scan
-        std::vector<pcd_constraints::HalfPlane> map_constraints_;  ///< of the offline map (path_map), loaded once
+        // obstacles in the filter's type (converted on arrival), all in the world / map frame
+        std::vector<cbf_safety_filter::Obstacle> map_obstacles_;        ///< of the offline map (path_map), loaded once
+        std::vector<cbf_safety_filter::Obstacle> lidar_obstacles_;      ///< of the clustering node, latest scan (TODO: subscriber)
+        std::vector<cbf_safety_filter::Obstacle> halfplane_obstacles_;  ///< one per half-plane of scan_to_constraint_node, latest scan
         std::optional<ekf_estimator::StateVec> state_;
 
         cbf_safety_filter::BarrierFunctionParams bf_params_;

@@ -1,5 +1,5 @@
-// Implementation of the CBF safety filter: the barrier functions h_i(x) for each half-plane,
-// the CBF condition dh_i/dt >= -alpha * h_i, and the (QP) solve for the safe command.
+// Implementation of the CBF safety filter: the barrier function h_i(x) of each plane, combined into one barrier
+// function per obstacle, the CBF condition dh/dt >= -alpha * h, and the (QP) solve for the safe command.
 // File-local helpers (dynamics model, QP setup) go in the anonymous namespace.
 //
 // The decision variable is the acceleration a = [a_fwd, a_lat, az] of the drone in the yaw-aligned body frame
@@ -99,7 +99,14 @@ namespace {
         return {model_params.C * v.x(), model_params.C * v.y(), 0.0};
     }
 
-    /// @brief One linear row per half-plane of the CBF condition h_dot >= -alpha * h, in the acceleration a.
+    /// @brief One CBF row of a single half-plane, with its h.
+    struct PlaneRow {
+        Eigen::RowVector3d A;  ///< row in the world-frame acceleration a_W
+        double b;
+        double h;              ///< [m] barrier function of the plane, compute_h()
+    };
+
+    /// @brief Linear row of the CBF condition h_dot >= -alpha * h for one half-plane, in the acceleration a.
     ///
     ///        n faces the free side. With v_n = -n·v (approach speed) and the total acceleration a - drag:
     ///          h_dot = -v_n + gain * n·(a - drag),   gain = t_reaction + v_n / a_max
@@ -107,43 +114,65 @@ namespace {
     ///          gain * n^T a  >=  v_n + gain * n·drag - alpha * h
     ///          \_ A_i __/       \__________ b_i ______________/
     ///
-    ///        Moving away (v_n <= 0): the plane is skipped if h >= 0. If h < 0 (already inside the
-    ///        margin), a row with gain = t_reaction is added so the drone is pushed back out.
+    ///        Moving away (v_n <= 0): v_bar = 0 in h, so the gain is t_reaction (pushes the drone back out if it is
+    ///        inside the margin). Rows are not skipped when moving away and h >= 0 (skipping is disabled).
     /// @param x predicted state of the drone (x_hat)
-    /// @param constraints all half-plane constraints of the current scan
+    /// @param plane half-plane, world frame
     /// @param model_params drone model parameters (drag coefficient)
     /// @param bf_params barrier function parameters (alpha, t_reaction, r_safety)
     /// @param a_max [m/s^2] maximum deceleration, from max_acceleration()
-    /// @return rows A (k x 3) and b (k), with k <= constraints.size() active rows
-    CbfRows buildCbfRows(const StateVec& x, const std::vector<HalfPlane>& constraints,
+    PlaneRow planeRow(const StateVec& x, const HalfPlane& plane, const ModelParams& model_params,
+                      const BarrierFunctionParams& bf_params, double a_max) {
+        const Eigen::Vector3d& n = plane.normal;               // faces the free side
+        const Eigen::Vector3d v = x.segment<3>(VX);
+        const double v_n = -n.dot(v);                          // approach speed towards the plane
+        const double h = compute_h(x, plane, bf_params, a_max);
+        // approaching: gain from the derivative of the reaction and braking distance terms
+        const double gain = v_n <= 0.0 ? bf_params.t_reaction : bf_params.t_reaction + v_n / a_max;
+        return {gain * n.transpose(), v_n + gain * n.dot(drag_term(v, model_params)) - bf_params.alpha * h, h};
+    }
+
+    /// @brief One linear row per obstacle of the CBF condition h_obs_dot >= -alpha * h_obs, in the acceleration a.
+    ///
+    ///        The drone is outside a convex obstacle iff it is on the free side of at least one of its planes, so
+    ///        the barrier function of the obstacle is h_obs = max_i h_i (one constraint per obstacle, not per plane).
+    ///
+    ///        TODO(obstacle reduction): for now the row of the active plane (largest h_i) is used. It switches
+    ///        between planes at the edges of the obstacle. Alternative: smooth max, e.g.
+    ///          h_obs = 1/k log(sum_i exp(k h_i)) - log(m)/k   (<= max_i h_i, i.e. conservative)
+    ///        with A, b the softmax(k h_i)-weighted sum of the plane rows.
+    ///        TODO(moving obstacles): Obstacle::velocity is not used yet (relative velocity v - v_obs in h and h_dot).
+    /// @param x predicted state of the drone (x_hat)
+    /// @param obstacles convex obstacles, world frame
+    /// @param model_params drone model parameters (drag coefficient)
+    /// @param bf_params barrier function parameters (alpha, t_reaction, r_safety)
+    /// @param a_max [m/s^2] maximum deceleration, from max_acceleration()
+    /// @return rows A (k x 3) and b (k), with k <= obstacles.size() (obstacles without planes are skipped)
+    CbfRows buildCbfRows(const StateVec& x, const std::vector<Obstacle>& obstacles,
                          const ModelParams& model_params, const BarrierFunctionParams& bf_params, double a_max) {
 
-        // allocate for the worst case (all planes active), shrink to the used rows at the end
+        // allocate for the worst case (one row per obstacle), shrink to the used rows at the end
         CbfRows rows;
-        rows.A.resize(static_cast<Eigen::Index>(constraints.size()), 3);
-        rows.b.resize(static_cast<Eigen::Index>(constraints.size()));
+        rows.A.resize(static_cast<Eigen::Index>(obstacles.size()), 3);
+        rows.b.resize(static_cast<Eigen::Index>(obstacles.size()));
         Eigen::Index count = 0;  // number of rows filled so far
-        for (const HalfPlane& constraint : constraints) {
-            const Eigen::Vector3d& n = constraint.normal;  // faces the free side
-            const double v_n = -n.dot(x.segment<3>(VX));   // approach speed towards the plane
-            const double h = compute_h(x, constraint, bf_params, a_max);
-            if (v_n <= 0.0) {   // check if moving away from obstacle
-                // if (h >= 0.0) { // check if within safe distance of obstacle
-                //     continue;   // safe and moving away: no row needed
-                // }
-                // inside the margin while moving away: v_bar = 0, so use t_reaction as the gain
-                rows.A.row(count) = bf_params.t_reaction * n.transpose();
-                rows.b(count) = v_n + bf_params.t_reaction * n.dot(drag_term(x.segment<3>(VX), model_params)) - bf_params.alpha * h;
-                ++count;
+        for (const Obstacle& obstacle : obstacles) {
+            if (obstacle.planes.empty()) {
                 continue;
             }
-            // approaching: gain from the derivative of the reaction and braking distance terms
-            const double gain = bf_params.t_reaction + v_n / a_max;
-            rows.A.row(count) = gain * n.transpose();
-            rows.b(count) = v_n + gain * n.dot(drag_term(x.segment<3>(VX), model_params)) - bf_params.alpha * h;
+            // active plane: the one with the largest h (h_obs = max_i h_i)
+            PlaneRow active = planeRow(x, obstacle.planes.front(), model_params, bf_params, a_max);
+            for (std::size_t i = 1; i < obstacle.planes.size(); ++i) {
+                PlaneRow row = planeRow(x, obstacle.planes[i], model_params, bf_params, a_max);
+                if (row.h > active.h) {
+                    active = row;
+                }
+            }
+            rows.A.row(count) = active.A;
+            rows.b(count) = active.b;
             ++count;
         }
-        // drop the unused rows of the skipped planes
+        // drop the unused rows of the skipped obstacles
         rows.A.conservativeResize(count, 3);
         rows.b.conservativeResize(count);
         return rows;
@@ -279,14 +308,14 @@ namespace {
 }  // namespace
 
     // Public entry point, documented in cbf_filter.hpp.
-    bool safety_filter(const StateVec& x, const std::vector<HalfPlane>& constraints, const std::deque<InputVec>& u_sent,
+    bool safety_filter(const StateVec& x, const std::vector<Obstacle>& obstacles, const std::deque<InputVec>& u_sent,
                        const InputVec& u_ref, InputVec& u, const DroneModel& model, const BarrierFunctionParams& bf_params,
                        double& slack, int& num_rows) {
 
-        // 1. state at which the new command acts, 2. one CBF row per relevant half-plane
+        // 1. state at which the new command acts, 2. one CBF row per obstacle
         const StateVec& x_hat = estimate_state(x, model, u_sent, bf_params.dt);
         const double a_max = max_acceleration(bf_params, model.params());  // reachable in every direction, from max_tilt
-        CbfRows rows = buildCbfRows(x_hat, constraints, model.params(), bf_params, a_max);  // in a_W
+        CbfRows rows = buildCbfRows(x_hat, obstacles, model.params(), bf_params, a_max);  // in a_W
         rotateRowsToBody(rows, x_hat(YAW));  // the QP solves for a_B, the frame of the tilt commands
 
         num_rows = static_cast<int>(rows.b.size());

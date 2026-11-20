@@ -7,7 +7,7 @@ cbf:
       constraints:
         type: string
         default_value: "/collision_avoidance/constraints"
-        description: "Half-plane constraints (shape_msgs/Plane[])."
+        description: "Half-plane constraints of scan_to_constraint_node (shape_msgs/Plane[]); each plane is an obstacle with one plane."
         read_only: true
         validation:
           not_empty<>: null
@@ -125,8 +125,8 @@ cbf:
 
   path_map:
     type: string
-    default_value: "config/map_constraints.csv"
-    description: "CSV file with the half-plane constraints of the offline map (header nx,ny,nz,offset; one plane per row, free side n·p + offset >= 0, map frame, n facing the free side (away from the obstacle)). A relative path is relative to the share directory of cbf_safety_filter (config/ is installed there), an absolute path is used as it is."
+    default_value: "config/map_obstacles.csv"
+    description: "CSV file with the obstacles of the offline map (header nx,ny,nz,offset,obstacle; one half-plane per row, rows with the same obstacle ID form one convex obstacle; free side n·p + offset >= 0, map frame, n facing the free side (out of the obstacle)). A relative path is relative to the share directory of cbf_safety_filter (config/ is installed there), an absolute path is used as it is."
     read_only: true
     validation:
       not_empty<>: null

@@ -1,8 +1,10 @@
-// Implementation of cbf_node: read parameters, keep the latest state and constraints,
+// Implementation of cbf_node: read parameters, keep the latest state and obstacles,
 // convert ROS messages <-> library types and publish. No CBF math belongs here.
 #include "cbf_safety_filter/nodes/cbf_node.hpp"
 
 #include "cbf_safety_filter/cbf_filter.hpp"
+
+#include "clustering.hpp"  // MapObstacle, LidarObstacle, loadMapObstacles
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
@@ -10,10 +12,8 @@
 #include <cmath>
 #include <deque>
 #include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -27,36 +27,16 @@ std::string resolveMapPath(const std::string& path) {
     return (std::filesystem::path(ament_index_cpp::get_package_share_directory("cbf_safety_filter")) / p).string();
 }
 
-/// @brief Read the half-planes of the offline map from a CSV file: header line "nx,ny,nz,offset", then one plane per
-///        row, free side n·p + offset >= 0 (map frame, n facing the free side, i.e. away from the obstacle). The
-///        normal is scaled to unit length (offset with it). Empty lines are skipped.
-/// @throws std::runtime_error if the file cannot be opened or a row is not 4 numbers / has a zero normal
-std::vector<pcd_constraints::HalfPlane> loadHalfPlanesCsv(const std::string& path) {
-    std::ifstream file(path);
-    if (!file) {
-        throw std::runtime_error("cannot open map constraints file " + path);
-    }
-    std::vector<pcd_constraints::HalfPlane> planes;
-    std::string line;
-    std::getline(file, line);  // header
-    for (int row = 2; std::getline(file, line); ++row) {
-        if (line.find_first_not_of(" \t\r") == std::string::npos) {
-            continue;
-        }
-        std::istringstream fields(line);
-        double value[4];
-        char comma;
-        if (!(fields >> value[0] >> comma >> value[1] >> comma >> value[2] >> comma >> value[3])) {
-            throw std::runtime_error(path + ":" + std::to_string(row) + ": expected 4 numbers nx,ny,nz,offset");
-        }
-        const Eigen::Vector3d normal(value[0], value[1], value[2]);
-        const double length = normal.norm();
-        if (length < 1e-9) {
-            throw std::runtime_error(path + ":" + std::to_string(row) + ": the normal is zero");
-        }
-        planes.push_back({normal / length, value[3] / length});
-    }
-    return planes;
+/// @brief Obstacle of the offline map -> obstacle of the filter (static: velocity 0).
+///        The planes are pcd_constraints::HalfPlane in both, so they are copied as they are.
+cbf_safety_filter::Obstacle toFilterObstacle(const clustering::MapObstacle& obs) {
+    return {obs.ID, obs.planes, Eigen::Vector3d::Zero()};
+}
+
+/// @brief Obstacle of the clustering node -> obstacle of the filter (with its velocity estimate).
+///        Whether inactive obstacles (active == false) are passed on is up to the caller.
+[[maybe_unused]] cbf_safety_filter::Obstacle toFilterObstacle(const clustering::LidarObstacle& obs) {
+    return {obs.ID, obs.planes, obs.v};
 }
 
 /// @brief Convert the EKF state estimate (nav_msgs/Odometry) into the 13-entry model state.
@@ -90,17 +70,19 @@ ekf_estimator::StateVec toStateVec(const nav_msgs::msg::Odometry& msg) {
 }
 
 
-std::vector<pcd_constraints::HalfPlane> toHalfPlane(const collision_avoidance_msgs::msg::HalfPlaneArray& msg) {
-    std::vector<pcd_constraints::HalfPlane> x;
-    x.clear();
-    x.reserve(msg.planes.size());
-    for (const auto& p : msg.planes) {
+/// @brief Half-planes of scan_to_constraint_node -> one obstacle per plane (a single half-plane is an obstacle
+///        with one plane). coef = [normal, offset], free side coef·[p, 1] >= 0. The ID is the index in the message.
+std::vector<cbf_safety_filter::Obstacle> toHalfPlaneObstacles(const collision_avoidance_msgs::msg::HalfPlaneArray& msg) {
+    std::vector<cbf_safety_filter::Obstacle> obstacles;
+    obstacles.reserve(msg.planes.size());
+    for (std::size_t i = 0; i < msg.planes.size(); ++i) {
+        const auto& c = msg.planes[i].coef;
         pcd_constraints::HalfPlane hp;
-        hp.normal = Eigen::Vector3d(p.coef[0], p.coef[1], p.coef[2]);
-        hp.offset = p.coef[3];  // coef = [normal, offset]: free side coef·[x, 1] >= 0
-        x.push_back(hp);
+        hp.normal = Eigen::Vector3d(c[0], c[1], c[2]);
+        hp.offset = c[3];
+        obstacles.push_back({static_cast<int>(i), {hp}, Eigen::Vector3d::Zero()});
     }
-    return x;
+    return obstacles;
 }
 
 /// @brief Command message -> model input. Convention (see ekf_estimator/types.hpp):
@@ -163,9 +145,13 @@ CbfNode::CbfNode() : Node("cbf_node") {
     bf_params_ = toBarrierFunctionParams(params_);
     model_.emplace(toModelParams(params_));
 
-    // constraints of the offline map, used together with the ones of every scan
+    // obstacles of the offline map (static, loaded once), used together with the LiDAR obstacles of every scan
     const std::string map_path = resolveMapPath(params_.path_map);
-    map_constraints_ = loadHalfPlanesCsv(map_path);
+    // TODO: check for: 2 vertical planes (top and bottom) and at least 3 non-parallel, non-vertical planes -> to be a valid obstacle
+    for (const auto& obs : clustering::loadMapObstacles(map_path).map_obstacle) {
+        map_obstacles_.push_back(toFilterObstacle(obs));
+    }
+    RCLCPP_INFO(get_logger(), "loaded %zu map obstacles from %s", map_obstacles_.size(), map_path.c_str());
 
     // PUBLISHER
     input_pub_ = create_publisher<geometry_msgs::msg::TwistStamped>(params_.topics.output.safe_command, rclcpp::QoS(10));
@@ -184,7 +170,12 @@ CbfNode::CbfNode() : Node("cbf_node") {
     constraint_sub_ = create_subscription<collision_avoidance_msgs::msg::HalfPlaneArray>(
         params_.topics.input.constraints, rclcpp::SensorDataQoS(),
         [this](const collision_avoidance_msgs::msg::HalfPlaneArray& msg) {constraintCallback(msg); });
-    
+
+    // TODO: subscribe to the obstacles of the clustering node (message type still to be defined), e.g.
+    //   lidar_obstacle_sub_ = create_subscription<...>(params_.topics.input.lidar_obstacles, rclcpp::SensorDataQoS(),
+    //       [this](const ...& msg) { lidarObstacleCallback(msg); });
+    // and in the callback: msg -> clustering::LidarObstacle -> toFilterObstacle() -> lidar_obstacles_
+
 }
 
 void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& msg) {
@@ -205,14 +196,17 @@ void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& msg) {
 
     const ekf_estimator::InputVec u_ref = toInputVec(msg);
 
-    // the map's constraints and the latest scan's
-    std::vector<pcd_constraints::HalfPlane> constraints = map_constraints_;
-    constraints.insert(constraints.end(), constraints_.begin(), constraints_.end());
+    // all obstacles: offline map, clustering node (latest scan), single half-planes (latest scan)
+    std::vector<cbf_safety_filter::Obstacle> obstacles;
+    obstacles.reserve(map_obstacles_.size() + lidar_obstacles_.size() + halfplane_obstacles_.size());
+    obstacles.insert(obstacles.end(), map_obstacles_.begin(), map_obstacles_.end());
+    obstacles.insert(obstacles.end(), lidar_obstacles_.begin(), lidar_obstacles_.end());
+    obstacles.insert(obstacles.end(), halfplane_obstacles_.begin(), halfplane_obstacles_.end());
 
     ekf_estimator::InputVec u = u_ref;
     double slack = 0.0;
     int num_rows = 0;
-    if (!cbf_safety_filter::safety_filter(*state_, constraints, u_sent, u_ref, u,
+    if (!cbf_safety_filter::safety_filter(*state_, obstacles, u_sent, u_ref, u,
                                             *model_, bf_params_, slack, num_rows)) {
         // TODO: decide on a fallback (u_ref unchanged is sent for now)
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "CBF QP failed, sending the nominal command");
@@ -238,8 +232,11 @@ void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& msg) {
 }
 
 void CbfNode::constraintCallback(const collision_avoidance_msgs::msg::HalfPlaneArray& msg) {
-    constraints_ = toHalfPlane(msg);
+    halfplane_obstacles_ = toHalfPlaneObstacles(msg);
 }
+
+// void CbfNode::clusteringCallback
+// void CbfNode::halfplaneCallback
 
 void CbfNode::stateCallback(const nav_msgs::msg::Odometry& msg) {
     state_ = toStateVec(msg);

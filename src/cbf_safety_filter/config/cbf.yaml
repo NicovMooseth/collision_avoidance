@@ -31,4 +31,4 @@ cbf_node:
       TAU_CMD: 0.08
       INPUT_DELAY_SEC: 0.10
 
-    path_map: "config/map_constraints.csv"
+    path_map: "config/map_obstacles.csv"
