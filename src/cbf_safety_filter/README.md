@@ -1,6 +1,6 @@
 # CBF Safety Filter
 
-# Known Issues
+## Known Issues
 Oszillating behaviour when initializing the drone within an unsafe region to an obstacle
 
 ## Description
@@ -29,8 +29,8 @@ $n^\top p + b \ge 0$). The node collects them from three sources and converts th
 
 | source | type in the node | ID |
 |---|---|---|
-| offline map, CSV `path_map` (`nx,ny,nz,offset,obstacle`), loaded once with `clustering::loadMapObstacles` | `clustering::MapObstacle` | obstacle column of the CSV |
-| clustering node (TODO: message and subscriber) | `clustering::LidarObstacle` (with velocity) | from the clustering node |
+| offline map, CSV `path_map` (`nx,ny,nz,offset,obstacle`), loaded once with `map_obstacles::loadMapObstacles` (drops obstacles that are not closed) | `map_obstacles::MapObstacle` | obstacle column of the CSV |
+| clustering node (TODO: message and subscriber) | converted from its message (planes + velocity) | from the clustering node |
 | `scan_to_constraint_node`, topic `constraints` | one obstacle per half-plane | index in the message |
 
 The drone is outside an obstacle as soon as it is on the free side of one of its planes, so the barrier function of an

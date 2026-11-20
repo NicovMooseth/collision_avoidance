@@ -31,4 +31,4 @@ cbf_node:
       TAU_CMD: 0.08
       INPUT_DELAY_SEC: 0.10
 
-    path_map: "config/map_obstacles.csv"
+    path_map: "maps/2026-10-20_13-24_Office2_obstacles.csv"  # relative to share/map_obstacles

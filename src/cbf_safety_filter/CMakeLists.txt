@@ -2,7 +2,7 @@
 #   - cbf_safety_filter_core: plain C++ library (CBF + EKF drone model), no ROS.
 #     Uses the HalfPlane type from pcd_constraints.
 #   - cbf_parameters: generated ParamListener from src/cbf_params.yaml
-#   - executable cbf_app (loads the map obstacles with the clustering library)
+#   - executable cbf_app (loads the map obstacles with the map_obstacles library)
 # Every new dependency needs a find_package() here AND a <depend> in package.xml.
 cmake_minimum_required(VERSION 3.10)
 project(cbf_safety_filter)
@@ -25,7 +25,7 @@ find_package(collision_avoidance_msgs REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 find_package(qpmad REQUIRED)
 find_package(pcd_constraints REQUIRED)
-find_package(clustering REQUIRED)  # MapObstacle / LidarObstacle and loadMapObstacles (node only, not the core)
+find_package(map_obstacles REQUIRED)  # MapObstacle and loadMapObstacles (node only, not the core)
 
 # ---- Algorithm library: plain C++, no ROS ----
 add_library(${PROJECT_NAME}_core
@@ -44,7 +44,7 @@ add_executable(cbf_app
   app/cbf_app.cpp
   src/nodes/cbf_node.cpp
 )
-target_link_libraries(cbf_app ${PROJECT_NAME}_core cbf_parameters clustering::clustering_core)
+target_link_libraries(cbf_app ${PROJECT_NAME}_core cbf_parameters map_obstacles::map_obstacles_core)
 ament_target_dependencies(cbf_app
   rclcpp ament_index_cpp sensor_msgs nav_msgs geometry_msgs collision_avoidance_msgs qpmad)
 

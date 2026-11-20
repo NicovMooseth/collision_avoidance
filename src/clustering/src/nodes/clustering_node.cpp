@@ -11,14 +11,14 @@
 
 namespace {
 
-/// @brief map.path -> absolute path: a relative path is relative to the share directory of this package
-///        (config/ is installed there), an absolute path is returned unchanged.
+/// @brief map.path -> absolute path: a relative path is relative to the share directory of map_obstacles
+///        (its maps/ folder is installed there), an absolute path is returned unchanged.
 std::string resolveMapPath(const std::string& path) {
     const std::filesystem::path p(path);
     if (p.is_absolute()) {
         return path;
     }
-    return (std::filesystem::path(ament_index_cpp::get_package_share_directory("clustering")) / p).string();
+    return (std::filesystem::path(ament_index_cpp::get_package_share_directory("map_obstacles")) / p).string();
 }
 
 /// @brief The finite points of the cloud, in the frame of the cloud (sensor frame).
@@ -53,9 +53,9 @@ ClusteringNode::ClusteringNode() : Node("clustering_node") {
         std::make_unique<clustering_map::ParamListener>(get_node_parameters_interface());
     map_params_ = map_loader_->get_params();
     const std::string map_path = resolveMapPath(map_params_.map.path);
-    obstacles_ = collision_avoidance::loadMapObstacles(map_path);
+    obstacles_ = map_obstacles::loadMapObstacles(map_path);
     RCLCPP_INFO(get_logger(), "Loaded %zu obstacles of the offline map from %s",
-                obstacles_.obstacles.size(), map_path.c_str());
+                obstacles_.map_obstacle.size(), map_path.c_str());
 
     cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
         params_.topics.input.points, rclcpp::SensorDataQoS(),

@@ -16,6 +16,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 find_package(pcd_constraints REQUIRED)
+find_package(map_obstacles REQUIRED)
 
 # ---- Algorithm library: plain C++, no ROS (exported) ----
 add_library(${PROJECT_NAME}_core src/clustering.cpp)
@@ -23,7 +24,8 @@ target_include_directories(${PROJECT_NAME}_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(${PROJECT_NAME}_core PUBLIC Eigen3::Eigen pcd_constraints::pcd_constraints_core)
+target_link_libraries(${PROJECT_NAME}_core PUBLIC
+  Eigen3::Eigen pcd_constraints::pcd_constraints_core map_obstacles::map_obstacles_core)
 
 # ---- Parameters (generated ParamListeners) ----
 generate_parameter_library(${PROJECT_NAME}_parameters src/clustering_params.yaml)
@@ -53,6 +55,6 @@ install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
 
 # lets other packages do find_package(clustering) + link clustering::clustering_core
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(Eigen3 pcd_constraints)
+ament_export_dependencies(Eigen3 pcd_constraints map_obstacles)
 
 ament_package()

@@ -4,7 +4,7 @@
 
 #include "cbf_safety_filter/cbf_filter.hpp"
 
-#include "clustering/clustering.hpp"  // MapObstacle, LidarObstacle, loadMapObstacles
+#include "map_obstacles/map_obstacles.hpp"  // MapObstacle, loadMapObstacles
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
@@ -17,26 +17,20 @@
 
 namespace {
 
-/// @brief path_map -> absolute path: a relative path is relative to the share directory of this package
-///        (config/ is installed there), an absolute path is returned unchanged.
+/// @brief path_map -> absolute path: a relative path is relative to the share directory of map_obstacles
+///        (its maps/ folder is installed there), an absolute path is returned unchanged.
 std::string resolveMapPath(const std::string& path) {
     const std::filesystem::path p(path);
     if (p.is_absolute()) {
         return path;
     }
-    return (std::filesystem::path(ament_index_cpp::get_package_share_directory("cbf_safety_filter")) / p).string();
+    return (std::filesystem::path(ament_index_cpp::get_package_share_directory("map_obstacles")) / p).string();
 }
 
 /// @brief Obstacle of the offline map -> obstacle of the filter (static: velocity 0).
 ///        The planes are pcd_constraints::HalfPlane in both, so they are copied as they are.
-cbf_safety_filter::Obstacle toFilterObstacle(const clustering::MapObstacle& obs) {
+cbf_safety_filter::Obstacle toFilterObstacle(const map_obstacles::MapObstacle& obs) {
     return {obs.ID, obs.planes, Eigen::Vector3d::Zero()};
-}
-
-/// @brief Obstacle of the clustering node -> obstacle of the filter (with its velocity estimate).
-///        Whether inactive obstacles (active == false) are passed on is up to the caller.
-[[maybe_unused]] cbf_safety_filter::Obstacle toFilterObstacle(const clustering::LidarObstacle& obs) {
-    return {obs.ID, obs.planes, obs.v};
 }
 
 /// @brief Convert the EKF state estimate (nav_msgs/Odometry) into the 13-entry model state.
@@ -148,7 +142,7 @@ CbfNode::CbfNode() : Node("cbf_node") {
     // obstacles of the offline map (static, loaded once), used together with the LiDAR obstacles of every scan
     const std::string map_path = resolveMapPath(params_.path_map);
     // TODO: check for: 2 vertical planes (top and bottom) and at least 3 non-parallel, non-vertical planes -> to be a valid obstacle
-    for (const auto& obs : clustering::loadMapObstacles(map_path).map_obstacle) {
+    for (const auto& obs : map_obstacles::loadMapObstacles(map_path).map_obstacle) {
         map_obstacles_.push_back(toFilterObstacle(obs));
     }
     RCLCPP_INFO(get_logger(), "loaded %zu map obstacles from %s", map_obstacles_.size(), map_path.c_str());
@@ -174,7 +168,7 @@ CbfNode::CbfNode() : Node("cbf_node") {
     // TODO: subscribe to the obstacles of the clustering node (message type still to be defined), e.g.
     //   lidar_obstacle_sub_ = create_subscription<...>(params_.topics.input.lidar_obstacles, rclcpp::SensorDataQoS(),
     //       [this](const ...& msg) { lidarObstacleCallback(msg); });
-    // and in the callback: msg -> clustering::LidarObstacle -> toFilterObstacle() -> lidar_obstacles_
+    // and in the callback: msg -> cbf_safety_filter::Obstacle (planes + velocity) -> lidar_obstacles_
 
 }
 

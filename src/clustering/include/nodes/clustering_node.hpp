@@ -44,7 +44,7 @@ class ClusteringNode : public rclcpp::Node {
 
         std::unique_ptr<clustering_map::ParamListener> map_loader_;  ///< parameters of the offline map (map.yaml)
         clustering_map::Params map_params_;
-        collision_avoidance::Obstacles obstacles_;  ///< of the offline map (map_params_.map.path), loaded once
+        map_obstacles::MapObstacles obstacles_;  ///< of the offline map (map_params_.map.path), loaded once
 
         rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr state_sub_;

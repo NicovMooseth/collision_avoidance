@@ -21,7 +21,7 @@
   <depend>qpmad</depend>
   <depend>generate_parameter_library</depend>
   <depend>pcd_constraints</depend>
-  <depend>clustering</depend>
+  <depend>map_obstacles</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
