@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<!-- Package manifest: name, description and ALL dependencies.
+     Every package used in CMakeLists.txt (find_package) needs a <depend> here (rosdep key). -->
+<package format="3">
+  <name>map_obstacles</name>
+  <version>0.1.0</version>
+  <description>Obstacles of the offline map: the map CSV files (maps/), the MapObstacle type, CSV loading and closed-shape check. Plain C++ library, shared by cbf_safety_filter and clustering.</description>
+  <maintainer email="nico@von-moos.org">nico</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>eigen</depend>
+  <depend>pcd_constraints</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
