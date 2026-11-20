@@ -40,7 +40,7 @@ namespace {
     }
 
     /// Number of sides of the polygon that approximates the tilt limit |a_h| <= g tan(max_tilt) in the QP.
-    constexpr int N_TILT = 16;
+    constexpr int N_TILT = 64;
 
     /// @brief Radius of the tilt disc: the horizontal acceleration at the total tilt limit.
     ///        Holding altitude, the vertical thrust carries the weight (T cos θ = m g) and the horizontal
