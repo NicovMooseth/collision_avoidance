@@ -8,10 +8,12 @@
 #include <cstddef>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <optional>
 
@@ -213,6 +215,116 @@ std::vector<int> dbscan_fast(const std::vector<Eigen::Vector3d>& points, const f
     }
     return labels;
 }
+
+// BOX FIT
+
+std::vector<Eigen::Vector2d> convexHull2d(std::vector<Eigen::Vector2d> points) {
+    // > 0: o -> a -> b turns left (counter-clockwise), < 0: right, 0: collinear
+    auto cross = [](const Eigen::Vector2d& o, const Eigen::Vector2d& a, const Eigen::Vector2d& b) {
+        return (a.x() - o.x()) * (b.y() - o.y()) - (a.y() - o.y()) * (b.x() - o.x());
+    };
+    // sort with increasing x (increasing y if same x)
+    std::sort(points.begin(), points.end(), [](const Eigen::Vector2d& a, const Eigen::Vector2d& b) {
+        return a.x() < b.x() || (a.x() == b.x() && a.y() < b.y());
+    });
+    points.erase(std::unique(points.begin(), points.end()), points.end());
+    if (points.size() < 3) {
+        return points;
+    }
+
+    std::vector<Eigen::Vector2d> hull(2 * points.size());
+    std::size_t k = 0;
+    // lower hull, left -> right: drop the last point while it does not make a left turn
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        while (k >= 2 && cross(hull[k - 2], hull[k - 1], points[i]) <= 0) {
+            --k;
+        }
+        hull[k++] = points[i];
+    }
+    // upper hull, right -> left (the last point of the lower hull is its first point)
+    const std::size_t lower = k + 1;
+    for (std::size_t i = points.size() - 1; i-- > 0;) {
+        while (k >= lower && cross(hull[k - 2], hull[k - 1], points[i]) <= 0) {
+            --k;
+        }
+        hull[k++] = points[i];
+    }
+    hull.resize(k - 1);  // the last point is the first one again
+    return hull;
+}
+
+std::vector<HalfPlane> fitAlignedBox(const std::vector<Eigen::Vector3d>& points, const double min_size) {
+    if (points.empty()) {
+        throw std::invalid_argument("fitAlignedBox: no points");
+    }
+    const double inf = std::numeric_limits<double>::infinity();
+
+    std::vector<Eigen::Vector2d> xy;
+    xy.reserve(points.size());
+    double z_min = inf, z_max = -inf;
+    for (const auto& p : points) {
+        xy.push_back(p.head<2>());
+        z_min = std::min(z_min, p.z());
+        z_max = std::max(z_max, p.z());
+    }
+    const std::vector<Eigen::Vector2d> hull = convexHull2d(std::move(xy));
+
+    // extent of the hull along u and the perpendicular w = u rotated by +90 deg
+    struct Frame {
+        Eigen::Vector2d u, w;
+        double u_min, u_max, w_min, w_max;
+    };
+    auto frame = [&hull, inf](const Eigen::Vector2d& u) {
+        Frame f{u, Eigen::Vector2d(-u.y(), u.x()), inf, -inf, inf, -inf};
+        for (const auto& q : hull) {
+            f.u_min = std::min(f.u_min, f.u.dot(q));  f.u_max = std::max(f.u_max, f.u.dot(q));
+            f.w_min = std::min(f.w_min, f.w.dot(q));  f.w_max = std::max(f.w_max, f.w.dot(q));
+        }
+        return f;
+    };
+
+    // the smallest rectangle around a convex polygon has one side along one of its edges: try every edge
+    Frame best = frame(Eigen::Vector2d::UnitX());  // fallback for a single point
+    double best_area = inf;
+    for (std::size_t i = 0; i < hull.size(); ++i) {
+        const Eigen::Vector2d edge = hull[(i + 1) % hull.size()] - hull[i];
+        if (edge.norm() < 1e-9) {
+            continue;
+        }
+        const Frame f = frame(edge.normalized());
+        const double area = (f.u_max - f.u_min) * (f.w_max - f.w_min);
+        if (area < best_area) {
+            best_area = area;
+            best = f;
+        }
+    }
+
+    // flat clusters (a wall, a table top) and single points get at least min_size per side
+    auto widen = [min_size](double& lo, double& hi) {
+        const double grow = std::max(0.0, min_size - (hi - lo)) / 2.0;
+        lo -= grow;
+        hi += grow;
+    };
+    widen(best.u_min, best.u_max);
+    widen(best.w_min, best.w_max);
+    widen(z_min, z_max);
+
+    // free side n·p + offset >= 0: the face at s = s_max has n = +axis, offset = -s_max,
+    // the face at s = s_min has n = -axis, offset = +s_min
+    const Eigen::Vector3d U(best.u.x(), best.u.y(), 0.0);
+    const Eigen::Vector3d W(best.w.x(), best.w.y(), 0.0);
+    const Eigen::Vector3d Z = Eigen::Vector3d::UnitZ();
+    std::vector<HalfPlane> box;
+    box.reserve(6);
+    box.push_back(HalfPlane{U, -best.u_max});   // side at u_max
+    box.push_back(HalfPlane{-U, best.u_min});   // side at u_min
+    box.push_back(HalfPlane{W, -best.w_max});   // side at w_max
+    box.push_back(HalfPlane{-W, best.w_min});   // side at w_min
+    box.push_back(HalfPlane{Z, -z_max});        // top
+    box.push_back(HalfPlane{-Z, z_min});        // bottom
+    return box;
+}
+
 
 // Representing clusters as boxes (or spheres)
 // Idea: fit a convex shape around known points

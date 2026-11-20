@@ -128,6 +128,20 @@ bool insideObstacle(const LidarObstacle& obstacle, const Eigen::Vector3d& p, dou
 bool insideAnyObstacle(const MapObstacles& obstacles, const Eigen::Vector3d& p, double eps = 1e-3);
 bool insideAnyObstacle(const LidarObstacles& obstacles, const Eigen::Vector3d& p, double eps = 1e-3);
 
+/// @brief Convex hull of 2D points (Andrew's monotone chain), counter-clockwise, first point not repeated.
+///        Collinear points on the edges and duplicates are dropped. Fewer than 3 distinct points: returns them
+///        (sorted by x, then y); all points on one line: its two end points.
+std::vector<Eigen::Vector2d> convexHull2d(std::vector<Eigen::Vector2d> points);
+
+/// @brief Smallest-area box around the points with vertical sides and horizontal top / bottom.
+///        The horizontal orientation is the one of the smallest rectangle around the 2D convex hull (one side
+///        along a hull edge); the height is the z range of the points. Sides shorter than min_size [m] (flat
+///        clusters, a single point) are widened to min_size around their middle.
+/// @param points at least one point, world frame
+/// @return 6 half-planes, normals out of the box: +u, -u, +w, -w (sides, u along the chosen hull edge), +z, -z
+/// @throws std::invalid_argument if points is empty
+std::vector<HalfPlane> fitAlignedBox(const std::vector<Eigen::Vector3d>& points, double min_size = 0.1);
+
 /// @brief Remove the points that lie inside any known obstacle (in place).
 void removeKnownPoints(const Obstacles& obstacles, std::vector<Eigen::Vector3d>& points);
 
