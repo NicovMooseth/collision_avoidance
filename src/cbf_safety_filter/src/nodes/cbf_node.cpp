@@ -17,7 +17,7 @@
 
 namespace {
 
-/// @brief path_map -> absolute path: a relative path is relative to the share directory of map_obstacles
+/// @brief map_path -> absolute path: a relative path is relative to the share directory of map_obstacles
 ///        (its maps/ folder is installed there), an absolute path is returned unchanged.
 std::string resolveMapPath(const std::string& path) {
     const std::filesystem::path p(path);
@@ -140,8 +140,7 @@ CbfNode::CbfNode() : Node("cbf_node") {
     model_.emplace(toModelParams(params_));
 
     // obstacles of the offline map (static, loaded once), used together with the LiDAR obstacles of every scan
-    const std::string map_path = resolveMapPath(params_.path_map);
-    // TODO: check for: 2 vertical planes (top and bottom) and at least 3 non-parallel, non-vertical planes -> to be a valid obstacle
+    const std::string map_path = resolveMapPath(params_.map_path);
     for (const auto& obs : map_obstacles::loadMapObstacles(map_path).map_obstacle) {
         map_obstacles_.push_back(toFilterObstacle(obs));
     }
@@ -213,7 +212,7 @@ void CbfNode::controllerCallback(const geometry_msgs::msg::TwistStamped& msg) {
     out.header.stamp = t;
     out.header.frame_id = msg.header.frame_id;
 
-    // pushlish slack on out.twist.angular.x
+    // publish the largest slack (one per CBF row) on out.twist.angular.x
     out.twist.angular.x = slack;
     // publish num_rows on out.twist.angular.y
     out.twist.angular.y = num_rows;

@@ -79,23 +79,26 @@ $$
 
 ## Optimization problem
 
-The decision variables are the acceleration and one slack, $z = [a_x, a_y, a_z, s]^\top$ (map frame), **not** the command
+The decision variables are the acceleration and one slack per CBF row, $z = [a_x, a_y, a_z, s_1, \dots, s_m]^\top$ (map frame), **not** the command
 itself: the CBF rows are linear in the acceleration. The nominal command is converted to a reference acceleration
 $a_{ref}$ (inverse of the conversion below), and the QP (solver: qpmad) is
 
 $$
 \begin{aligned}
-\min_{a,\,s} \quad & \tfrac12 \lVert a - a_{ref} \rVert^2 + \tfrac12 s^2 + \rho\, s \\
-\text{s.t.} \quad & \gamma_i \, n_i^\top a + s \ge v_{n,i} + \gamma_i \, n_i^\top d(v) - \alpha \, h_i(x) \qquad \text{(one row per active plane } i) \\
+\min_{a,\,s} \quad & \tfrac12 \lVert a - a_{ref} \rVert^2 + \tfrac12 \lVert s \rVert^2 + \rho \textstyle\sum_i s_i \\
+\text{s.t.} \quad & \gamma_i \, n_i^\top a + s_i \ge v_{n,i} + \gamma_i \, n_i^\top d(v) - \alpha \, h_i(x) \qquad \text{(one row per active plane } i) \\
 & -a_{max} \le a_x, a_y \le a_{max} \\
 & (-v_{z,max} - v_z)\,\tau_z^{-1} \le a_z \le (v_{z,max} - v_z)\,\tau_z^{-1} \\
-& s \ge 0
+& s_i \ge 0
 \end{aligned}
 $$
 
-i.e. $\min_z \tfrac12 z^\top H z + f^\top z$ with $H = I_4$ and $f = [-a_{ref}^\top, \rho]^\top$. The slack $s$ relaxes
-all rows by the same amount and keeps the QP feasible when the constraints conflict with the input limits; $\rho$
-(`RHO`) sets how strongly that is penalised. $s > 0$ means the constraints could not all be met.
+i.e. $\min_z \tfrac12 z^\top H z + f^\top z$ with $H = I_{3+m}$ and $f = [-a_{ref}^\top, \rho, \dots, \rho]^\top$. Each slack $s_i$
+relaxes only its own row and keeps the QP feasible when that constraint conflicts with the input limits; $\rho$
+(`RHO`) sets how strongly that is penalised. $s_i > 0$ means constraint $i$ could not be met. Per-row slacks matter
+when one row is infeasible (e.g. a wall already inside the margin needs more horizontal acceleration than the tilt
+limit allows): with a single shared slack it would relax every other row too (e.g. the ceiling, which $a_z$ could
+still satisfy).
 
 The safe acceleration is converted back to a command (and clamped to the limits):
 
@@ -151,7 +154,7 @@ All subscriptions use the sensor-data QoS (best effort).
 | `topics.output.safe_command` | `/collision_avoidance/safe_command` | `geometry_msgs/TwistStamped` | safe command, same field layout as the nominal command |
 
 - the yaw rate is passed through unchanged (the filter only acts on roll, pitch and vertical velocity)
-- `twist.angular.x` carries the QP slack $s$ (0 = all constraints met)
+- `twist.angular.x` carries the largest QP slack $\max_i s_i$ (0 = all constraints met)
 - `header.stamp` is the time of the filter step, `header.frame_id` is copied from the nominal command
 
 ## Parameters

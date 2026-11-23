@@ -195,60 +195,69 @@ namespace {
 
     /// @brief Solve the safety QP for the acceleration closest to the reference.
     ///
-    ///        variables z = [a (3), s (1)],  a = [a_fwd, a_lat, az] in the body frame
-    ///        min   1/2 |a - a_ref|^2 + 1/2 s^2 + rho * s
-    ///        s.t.  A a + s >= b                                  (CBF rows, all relaxed by the same slack s)
+    ///        variables z = [a (3), s (m)],  a = [a_fwd, a_lat, az] in the body frame, one slack s_i per CBF row
+    ///        min   1/2 |a - a_ref|^2 + 1/2 |s|^2 + rho * sum_i s_i
+    ///        s.t.  A_i a + s_i >= b_i                            (CBF rows, each relaxed by its own slack)
     ///              cos(φ_k) a_fwd + sin(φ_k) a_lat <= a_max      (tilt: N_TILT-gon, φ_k = 2πk / N_TILT, no slack)
     ///              az_min <= az <= az_max                         (vertical velocity limit)
     ///              s >= 0
     ///
     ///        The tilt rows limit the total tilt (roll and pitch combined), not each angle on its own: the polygon
     ///        is inscribed in the disc |a_h| <= g tan(max_tilt), so the tilt limit is never exceeded.
-    ///        The slack keeps the QP feasible when the CBF rows conflict with the input limits;
-    ///        rho weights how strongly a violation is penalised.
+    ///        The slacks keep the QP feasible when CBF rows conflict with the input limits; rho weights how strongly
+    ///        a violation is penalised. One slack per row: a row that cannot be met (e.g. a wall inside the margin,
+    ///        needing more horizontal acceleration than the tilt allows) only relaxes itself, the other rows (e.g.
+    ///        the ceiling, met with az) stay enforced. With a single shared slack, that row would relax all of them.
     /// @param a_ref reference acceleration (from the nominal command), body frame
     /// @param az_min lower bound on az
     /// @param az_max upper bound on az
     /// @param a_max inradius of the tilt polygon, from max_acceleration()
     /// @param rows CBF rows in the body-frame acceleration, from buildCbfRows() and rotateRowsToBody()
-    /// @param rho weight of the slack in the cost (bf_params.rho)
+    /// @param rho weight of the slacks in the cost (bf_params.rho)
     /// @param[out] a safe acceleration, body frame
-    /// @param[out] slack slack s of the solution (0 = no constraint relaxed)
+    /// @param[out] slack largest slack max_i s_i of the solution (0 = no constraint relaxed, also when m = 0)
     /// @return true if qpmad found a solution
     bool solve_qp(const Eigen::Vector3d& a_ref, double az_min, double az_max, double a_max, const CbfRows& rows, double rho,
             Eigen::Vector3d& a, double& slack) {
 
         const double inf = std::numeric_limits<double>::infinity();
-        const Eigen::Index m = rows.b.size();  // number of CBF rows
+        const Eigen::Index m = rows.b.size();  // number of CBF rows = number of slacks
+        const Eigen::Index n = 3 + m;          // number of variables
 
         // the variables z = [a, s], cost written as 1/2 z'Hz + h'z.
-        // H = I gives 1/2|a|^2 + 1/2 s^2; h = [-a_ref, rho] adds -a_ref·a (closest to a_ref) and rho * s
-        Eigen::MatrixXd H = Eigen::MatrixXd::Identity(4, 4);
-        Eigen::VectorXd h(4);
-        h << -a_ref, rho;
+        // H = I gives 1/2|a|^2 + 1/2|s|^2; h = [-a_ref, rho, ..., rho] adds -a_ref·a (closest to a_ref) and
+        // rho * sum_i s_i
+        Eigen::MatrixXd H = Eigen::MatrixXd::Identity(n, n);
+        Eigen::VectorXd h(n);
+        h.head<3>() = -a_ref;
+        h.tail(m).setConstant(rho);
 
         // bounds on z: a_fwd, a_lat free (limited by the tilt rows), az by the vertical velocity limit, s >= 0
-        Eigen::VectorXd lower(4), upper(4);
-        lower << -inf, -inf, az_min, 0.0;
-        upper << inf, inf, az_max, inf;
+        Eigen::VectorXd lower(n), upper(n);
+        lower.head<3>() << -inf, -inf, az_min;
+        upper.head<3>() << inf, inf, az_max;
+        lower.tail(m).setZero();
+        upper.tail(m).setConstant(inf);
 
         // general constraints  A_lb <= A z <= A_ub
-        Eigen::MatrixXd A(m + N_TILT, 4);
+        Eigen::MatrixXd A = Eigen::MatrixXd::Zero(m + N_TILT, n);
         Eigen::VectorXd A_lb(m + N_TILT), A_ub(m + N_TILT);
-        // CBF rows [A_rows, 1] z >= b: the column of ones adds the slack to every row. The upper bound is needed:
-        // with a lower bound alone, qpmad treats the rows as equalities
-        A.topRows(m) << rows.A, Eigen::VectorXd::Ones(m);
+        // CBF rows [A_rows, I_m] z >= b: the identity block adds slack s_i to row i only. The upper bound is
+        // needed: with a lower bound alone, qpmad treats the rows as equalities
+        A.topLeftCorner(m, 3) = rows.A;
+        A.topRightCorner(m, m).setIdentity();
         A_lb.head(m) = rows.b;
         A_ub.head(m).setConstant(inf);
         // tilt rows: cos(φ_k) a_fwd + sin(φ_k) a_lat <= a_max, without slack (hard limit)
         for (int k = 0; k < N_TILT; ++k) {
             const double phi = 2.0 * M_PI * k / N_TILT;
-            A.row(m + k) << std::cos(phi), std::sin(phi), 0.0, 0.0;
+            A(m + k, 0) = std::cos(phi);
+            A(m + k, 1) = std::sin(phi);
             A_lb(m + k) = -inf;
             A_ub(m + k) = a_max;
         }
 
-        Eigen::VectorXd z(4);
+        Eigen::VectorXd z(n);
         qpmad::Solver solver;
         try {
             if (solver.solve(z, H, h, lower, upper, A, A_lb, A_ub) != qpmad::Solver::OK) {
@@ -257,9 +266,9 @@ namespace {
         } catch (const std::exception&) {  // for example invalid input: the slack keeps the rows feasible
             return false;
         }
-        // split the solution back into acceleration and slack
+        // split the solution back into acceleration and slacks
         a = z.head<3>();
-        slack = z(3);
+        slack = m > 0 ? z.tail(m).maxCoeff() : 0.0;
         return true;
     }
 

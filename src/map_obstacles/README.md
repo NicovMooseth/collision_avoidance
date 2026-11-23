@@ -20,7 +20,7 @@ rebuild the package (`colcon build --packages-select map_obstacles`) so the inst
 
 | file | content |
 |---|---|
-| `2026-10-20_13-24_Office2_obstacles.csv` | Office2 map (default of both nodes), 255 obstacles (one, ID 140, is not closed and dropped) |
+| `2026-10-20_13-24_Office2_obstacles.csv` | Office2 map (default of both nodes), 256 obstacles (one, ID 141, is not closed and dropped) |
 | `test_two_boxes.csv` | two boxes, for tests |
 
 The maps are generated from a `.pcd` map with `pcd_to_obstacles.py` (in `final/` of the map_clustering repository,
@@ -33,6 +33,14 @@ cd ~/test/map_clustering/final
 
 It writes `<map>_obstacles.csv` (used here) and `<map>_obstacles.yaml` (the same obstacles with their kind and number
 of points, for inspection).
+
+To look at a map, and optionally at the lidar in it (pose, range, scan, the obstacles it sees and their active faces
+as the CBF filter chooses them), use `show_obstacles.py` in the same folder:
+
+```bash
+.venv/bin/python show_obstacles.py                                        # the default map of the nodes
+.venv/bin/python show_obstacles.py <map>_obstacles.csv --hide-ceiling --lidar 1.25 11.69 1.28 --range 2
+```
 
 ## CSV format
 

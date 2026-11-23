@@ -81,7 +81,7 @@ cbf:
     RHO:
       type: double
       default_value: 1000.0
-      description: "QP weight of the slack: cost 1/2|a - a_ref|^2 + 1/2 s^2 + RHO s [-]"
+      description: "QP weight of the slacks (one per CBF row): cost 1/2|a - a_ref|^2 + 1/2|s|^2 + RHO sum_i s_i [-]"
       validation:
         gt<>: [0.0]
 
@@ -123,7 +123,7 @@ cbf:
       validation:
         gt<>: [0.0]
 
-  path_map:
+  map_path:
     type: string
     default_value: "maps/2026-10-20_13-24_Office2_obstacles.csv"
     description: "CSV file with the obstacles of the offline map (header nx,ny,nz,offset,obstacle; one half-plane per row, rows with the same obstacle ID form one convex obstacle; free side n·p + offset >= 0, map frame, n facing the free side (out of the obstacle)). Obstacles that are not closed are dropped. A relative path is relative to the share directory of map_obstacles (its maps/ folder is installed there), an absolute path is used as it is."
