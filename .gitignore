@@ -13,3 +13,4 @@ src/node_example/
 .vscode/
 # local test recordings (ros2 bag folders), not for GitHub
 wall_test*/
+RECORDINGS/
