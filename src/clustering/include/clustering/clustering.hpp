@@ -1,13 +1,17 @@
-// Known obstacles of the offline map (convex polytopes from half-planes) and a voxel grid for fast fixed-radius
-// neighbour search in a point cloud (used by DBSCAN).
+// Obstacles of the LiDAR scans, point-in-obstacle tests (offline map and LiDAR obstacles), box fit and a voxel grid
+// for fast fixed-radius neighbour search in a point cloud (used by DBSCAN). The offline map itself (MapObstacle,
+// loadMapObstacles) is in the map_obstacles package.
 // Plain C++ / Eigen only.
 #pragma once
 
+#include "map_obstacles/map_obstacles.hpp"
 #include "pcd_constraints/constraints.hpp"
 
 #include <Eigen/Core>
 
+#include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -90,29 +94,41 @@ private:
 /// The half-plane type of the workspace (pcd_constraints/constraints.hpp), not a copy of it.
 using pcd_constraints::HalfPlane;
 
-/// @brief Convex obstacle: the intersection of the obstacle sides of its half-planes.
-///        HalfPlane convention: normals point out of the obstacle towards free space, free side
-///        normal.dot(x) + offset >= 0.
-struct MapObstacle {
-    int ID;
-    std::vector<HalfPlane> planes;
+/// Obstacles of the offline map (map_obstacles package), not copies of them.
+using map_obstacles::MapObstacle;
+using map_obstacles::MapObstacles;
+
+/// One measurement of a tracked obstacle.
+struct Measurement {
+    double stamp;            ///< scan stamp [s]; time steps vary when scans are skipped or the obstacle was hidden
+    Eigen::Vector3d center;  ///< center of the cluster, world frame [m]
 };
 
-struct MapObstacles {
-    std::vector<MapObstacle> map_obstacle;
-};
-
+/// One tracked obstacle (track): its own measurement history and current estimate.
 struct LidarObstacle {
     int ID;
-    bool active; 
-    int motion; // 0: static, 1: linear
-    std::vector<HalfPlane> planes;
-    Eigen::Vector3d center;
-    Eigen::Vector3d v;
+    double last_seen;                ///< stamp of the last matched measurement [s]
+    int motion;                      ///< 0: static, 1: linear
+    std::vector<HalfPlane> planes;   ///< shape of the latest measurement, world frame
+    std::deque<Measurement> history; ///< last measurements, oldest first (at most history.num_measurements)
+    Eigen::Vector3d v = Eigen::Vector3d::Zero();  ///< velocity estimate, world frame [m/s]
 };
 
+/// All tracked LiDAR obstacles.
 struct LidarObstacles {
     std::vector<LidarObstacle> lidar_obstacles;
+};
+
+/// Parameters of the clustering library, filled by the node from its ROS parameters.
+struct ClusteringParams {
+    double eps = 0.3;                  ///< DBSCAN neighbourhood radius [m]
+    std::size_t min_points = 15;       ///< DBSCAN: neighbours of a core point, itself included [-]
+    double min_size = 0.1;             ///< fitAlignedBox: minimum side length of a box [m]
+    std::size_t num_measurements = 5;  ///< measurements kept per track [-]
+    std::size_t min_measurements = 3;  ///< measurements a track needs before its velocity is estimated [-]
+    double max_static_speed = 0.3;     ///< tracks slower than this count as static [m/s]
+    double max_association_distance = 0.5;  ///< a cluster further than this from every predicted track center
+                                            ///< starts a new track [m]
 };
 
 /// @brief Is p inside the convex region of these half-planes (intersection of their obstacle sides)?
@@ -140,25 +156,62 @@ std::vector<Eigen::Vector2d> convexHull2d(std::vector<Eigen::Vector2d> points);
 /// @param points at least one point, world frame
 /// @return 6 half-planes, normals out of the box: +u, -u, +w, -w (sides, u along the chosen hull edge), +z, -z
 /// @throws std::invalid_argument if points is empty
-std::vector<HalfPlane> fitAlignedBox(const std::vector<Eigen::Vector3d>& points, double min_size = 0.1);
+std::vector<HalfPlane> fitAlignedBox(const std::vector<Eigen::Vector3d>& points, const ClusteringParams& params);
+
+/// @brief Mean of the points (center of a cluster).
+/// @param points at least one point
+Eigen::Vector3d avgPoint(const std::vector<Eigen::Vector3d>& points);
+
+/// @brief Update the track with the cluster matched to it in the current scan (or a new track with its first
+///        cluster): history (updateHistory), last_seen (updateTime), shape (updatePlanes), then velocity and
+///        motion type from the updated history (updateMotion).
+/// @param obstacle the track
+/// @param cluster_points points of the matched cluster, world frame, at least one
+/// @param stamp scan stamp [s]
+void updateLidarObs(LidarObstacle& obstacle, const std::vector<Eigen::Vector3d>& cluster_points, double stamp,
+                    const ClusteringParams& params);
+
+/// @brief Append the measurement and drop the oldest ones beyond params.num_measurements (at least 1 is kept).
+void updateHistory(LidarObstacle& obstacle, const Measurement& measurement, const ClusteringParams& params);
+
+/// @brief last_seen = stamp [s].
+void updateTime(LidarObstacle& obstacle, double stamp);
+
+/// @brief planes = box around the cluster (fitAlignedBox): the shape of the latest measurement.
+void updatePlanes(LidarObstacle& obstacle, const std::vector<Eigen::Vector3d>& cluster_points,
+                  const ClusteringParams& params);
+
+/// @brief v = least-squares line through the centers of the history over time; motion = 1 (linear) if
+///        |v| > params.max_static_speed, else 0 (static). With fewer than params.min_measurements (at least 2)
+///        measurements, or all at the same time: v = 0, motion = 0.
+void updateMotion(LidarObstacle& obstacle, const ClusteringParams& params);
 
 /// @brief Remove the points that lie inside any known obstacle (in place).
-void removeKnownPoints(const Obstacles& obstacles, std::vector<Eigen::Vector3d>& points);
+void removeKnownPoints(const MapObstacles& obstacles, std::vector<Eigen::Vector3d>& points);
 
-/// @brief Read the obstacles of the offline map from a CSV file: header line "nx,ny,nz,offset,obstacle"
-/// @throws std::runtime_error if the file cannot be opened or a row is not 4 numbers + 1 integer / has a zero normal
-MapObstacles loadMapObstacles(const std::string& path);
+/// @brief DBSCAN: the label of each point, NOISE (0) or a cluster id (1, 2, ...).
+///        params.eps [m]: neighbourhood radius; params.min_points: neighbours of a core point, itself included.
+std::vector<int> dbscan_fast(const std::vector<Eigen::Vector3d>& points, const ClusteringParams& params);
 
-/// @brief Is the obstacle a closed (bounded) shape?
-///        Needs a top plane (normal within horizontal_tol_deg of +z), a bottom plane (within horizontal_tol_deg of
-///        -z) and side planes whose normals, seen from above, surround the
-///        obstacle: no gap of 180 deg - horizontal_tol_deg or more between neighbouring directions. 
-/// @param obstacle normals of unit length, out of the obstacle
-/// @param horizontal_tol_deg [deg] max angle of a top / bottom normal from vertical
-bool isClosedObstacle(const MapObstacle& obstacle, double horizontal_tol_deg = 5.0);
+/// @brief The points of each cluster: result[k] holds the points with label k + 1. Noise (label 0) is dropped.
+std::vector<std::vector<Eigen::Vector3d>> splitClusters(const std::vector<Eigen::Vector3d>& points,
+                                                        const std::vector<int>& labels);
 
-/// @brief Remove the obstacles that are not closed (isClosedObstacle) from map_obstacles
-/// @return IDs of the removed obstacles, in their original order
-std::vector<int> obstacleFeasibilityCheck(MapObstacles& map_obstacles, double horizontal_tol_deg = 5.0);
+/// @brief Center of the track at stamp [s]: last measured center + v * (stamp - last measurement stamp).
+///        v is zero for static tracks, so they stay where they were measured last.
+/// @param obstacle a track with at least one measurement
+Eigen::Vector3d predictCenter(const LidarObstacle& obstacle, double stamp);
+
+/// @brief Match the clusters of one scan to the tracks and update them (updateLidarObs).
+///        Greedy nearest neighbour: all track-cluster pairs with the distance between the predicted track
+///        center (predictCenter) and the cluster center below params.max_association_distance, shortest first;
+///        each track and each cluster is used at most once. Unmatched clusters start new tracks (ID
+///        next_track_id++). Unmatched tracks are not changed (deleted later by the timeout).
+/// @param tracks updated in place
+/// @param clusters points of each cluster of the scan (splitClusters), world frame, none empty
+/// @param stamp scan stamp [s]
+/// @return the track ID of each cluster (same order as clusters)
+std::vector<int> associateClusters(LidarObstacles& tracks, const std::vector<std::vector<Eigen::Vector3d>>& clusters,
+                                   double stamp, const ClusteringParams& params, int& next_track_id);
 
 }  // namespace clustering

@@ -37,7 +37,7 @@ cbf:
   barrier_function:
     R_SAFETY:
       type: double
-      default_value: 0.25
+      default_value: 1.0
       description: "Safe distance from obstacle [m]"
       validation:
         gt<>: [0.0]

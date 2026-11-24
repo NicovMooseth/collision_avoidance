@@ -4,6 +4,8 @@
 
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <collision_avoidance_msgs/msg/lidar_obstacle_array.hpp>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -11,7 +13,6 @@
 #include "clustering/clustering.hpp"
 #include "clustering/clustering_parameters.hpp"
 #include "clustering/map_parameters.hpp"
-#include "constants.h"
 
 #include <deque>
 #include <memory>
@@ -34,6 +35,17 @@ class ClusteringNode : public rclcpp::Node {
         /// @brief Pose of the drone (body -> world) closest in time to stamp, if one is close enough.
         std::optional<Eigen::Isometry3d> poseAt(const rclcpp::Time& stamp) const;
 
+        /// @brief Publish the points left after removing the known (map) obstacles, world frame.
+        void publishPoints(const std_msgs::msg::Header& header, const std::vector<Eigen::Vector3d>& points);
+
+        /// @brief Publish the clusters of this scan (colored by track ID), the tracks and their RViz markers.
+        /// @param header stamp = scan time, frame_id = world frame
+        /// @param clusters points of each cluster of the scan, world frame
+        /// @param cluster_track_ids track ID of each cluster (associateClusters)
+        void publishResults(const std_msgs::msg::Header& header,
+                            const std::vector<std::vector<Eigen::Vector3d>>& clusters,
+                            const std::vector<int>& cluster_track_ids);
+
         /// @brief Transform points from the sensor frame into the world frame (in place).
         /// @param points in the sensor frame on input, in the world frame on output
         /// @param T_WB drone pose at scan time (body -> world)
@@ -55,9 +67,17 @@ class ClusteringNode : public rclcpp::Node {
         /// transformed points.
         std::string world_frame_;
 
-        Eigen::Isometry3d T_BS_;  ///< sensor -> body, from extrinsics.fast_lio_to_body
+        Eigen::Isometry3d T_BS_;
 
-        // publish what?
-        // obstacles, with motion estimate
-        // rclcpp::Publisher<>;
+        /// Tracked LiDAR obstacles, each with its own measurement history (LidarObstacle::history). Tracks not
+        /// seen for history.track_timeout seconds are deleted.
+        clustering::LidarObstacles tracks_;
+        int next_track_id_ = 0;  ///< ID of the next new track
+        clustering::ClusteringParams clustering_params_;  ///< library parameters, filled from params_ once
+
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr points_pub_;
+
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cluster_pub_;
+        rclcpp::Publisher<collision_avoidance_msgs::msg::LidarObstacleArray>::SharedPtr obstacle_pub_;
+        rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
 };

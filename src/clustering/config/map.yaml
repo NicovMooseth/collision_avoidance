@@ -5,4 +5,4 @@ clustering_node:
   ros__parameters:
 
     map:
-      path: "maps/2026-10-20_13-24_Office2_obstacles.csv"  # relative to share/map_obstacles
+      path: "maps/Office2_new_lidar_obstacles.csv"  # relative to share/map_obstacles

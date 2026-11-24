@@ -14,6 +14,9 @@ find_package(Eigen3 REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(shape_msgs REQUIRED)
+find_package(collision_avoidance_msgs REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 find_package(pcd_constraints REQUIRED)
 find_package(map_obstacles REQUIRED)
@@ -38,7 +41,8 @@ add_executable(clustering_app
 )
 target_include_directories(clustering_app PRIVATE include)
 target_link_libraries(clustering_app ${PROJECT_NAME}_core ${PROJECT_NAME}_parameters map_parameters)
-ament_target_dependencies(clustering_app rclcpp ament_index_cpp sensor_msgs nav_msgs)
+ament_target_dependencies(clustering_app rclcpp ament_index_cpp sensor_msgs nav_msgs visualization_msgs shape_msgs
+  collision_avoidance_msgs)
 
 # ---- Install ----
 # only the library headers (include/clustering/); include/nodes/ belongs to the node and stays private

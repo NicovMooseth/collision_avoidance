@@ -8,12 +8,16 @@ clustering_node:
       input:
         points: "/rms2/lidar/points"
         state: "/filter/state_estimate"
+      output:
+        points: "/clustering/points"
+        clusters: "/clustering/clusters"
+        obstacles: "/clustering/obstacles"
+        markers: "/clustering/markers"
 
     state:
       buffer_duration: 1.0    # clouds arrive ~0.12 s after their stamp
-      max_time_offset: 0.05   # states come at 50 Hz: nearest one is <= 10 ms away
+      max_time_offset: 0.20   # states come at 50 Hz: nearest one is <= 10 ms away
 
-    # Sensor -> body extrinsic T_BS, same as config/scan_to_constraint.yaml of pcd_constraints
     extrinsics:
       fast_lio_to_body:
         translation: [0.0, 0.0, 0.0]   # the LiDAR is taken as the drone's center
@@ -25,3 +29,10 @@ clustering_node:
     dbscan:
       eps: 0.3
       min_points: 15
+    
+    history:
+      num_measurements: 5     # per track
+      min_measurements: 3     # before the velocity is estimated
+      max_static_speed: 0.1   # [m/s], slower tracks are static
+      lidar_frequency: 10
+      track_timeout: 0.5      # [s], 5 scans at 10 Hz
