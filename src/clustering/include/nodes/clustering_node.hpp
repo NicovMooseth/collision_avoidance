@@ -6,6 +6,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <collision_avoidance_msgs/msg/lidar_obstacle_array.hpp>
+#include <collision_avoidance_msgs/msg/tracking_stats.hpp>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -31,6 +32,14 @@ class ClusteringNode : public rclcpp::Node {
 
         /// @brief Store the drone pose with its stamp, so the pose at scan time can be looked up later.
         void stateCallback(const nav_msgs::msg::Odometry& msg);
+
+        /// @brief Add the points of this scan to scan_buffer_, drop old scans, return the points of all scans in it.
+        ///        Keeps at most accumulation.num_scans scans, none older than (num_scans - 0.5) / lidar_frequency
+        ///        before this scan (skipped scans do not stretch the window), and clears the buffer if time jumps
+        ///        back (bag restarted).
+        /// @param scan_time stamp of this scan [s]
+        /// @param points of this scan, world frame, map obstacles removed
+        std::vector<Eigen::Vector3d> integrateScans(double scan_time, std::vector<Eigen::Vector3d> points);
 
         /// @brief Pose of the drone (body -> world) closest in time to stamp, if one is close enough.
         std::optional<Eigen::Isometry3d> poseAt(const rclcpp::Time& stamp) const;
@@ -73,11 +82,18 @@ class ClusteringNode : public rclcpp::Node {
         /// seen for history.track_timeout seconds are deleted.
         clustering::LidarObstacles tracks_;
         int next_track_id_ = 0;  ///< ID of the next new track
+        int num_confirmed_total_ = 0;  ///< tracks confirmed since the start (statistics)
         clustering::ClusteringParams clustering_params_;  ///< library parameters, filled from params_ once
+
+        /// Points of the last scans after removing the map obstacles (scan stamp [s], points in the world frame),
+        /// oldest first: at most accumulation.num_scans scans. Points stay where they were measured (no motion
+        /// compensation of moving obstacles).
+        std::deque<std::pair<double, std::vector<Eigen::Vector3d>>> scan_buffer_;
 
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr points_pub_;
 
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cluster_pub_;
         rclcpp::Publisher<collision_avoidance_msgs::msg::LidarObstacleArray>::SharedPtr obstacle_pub_;
         rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+        rclcpp::Publisher<collision_avoidance_msgs::msg::TrackingStats>::SharedPtr stats_pub_;
 };

@@ -13,6 +13,7 @@ clustering_node:
         clusters: "/clustering/clusters"
         obstacles: "/clustering/obstacles"
         markers: "/clustering/markers"
+        stats: "/clustering/stats"
 
     state:
       buffer_duration: 1.0    # clouds arrive ~0.12 s after their stamp
@@ -29,10 +30,14 @@ clustering_node:
     # distance to the LiDAR, as in scan_to_constraint; min drops the no-echo points at (0, 0, 0)
     range:
       min: 0.3
-      max: 30.0
+      max: 10.0
+
+    # cluster the points of the last num_scans scans together (1 = current scan only), no motion compensation
+    accumulation:
+      num_scans: 3
 
     map_removal:
-      margin: 0.1   # [m], points this close outside a map obstacle are removed too
+      margin: 0.15   # [m], points this close outside a map obstacle are removed too
 
     dbscan:
       eps: 0.1
@@ -43,4 +48,5 @@ clustering_node:
       min_measurements: 3     # before the velocity is estimated
       max_static_speed: 0.5   # [m/s], slower tracks are static
       lidar_frequency: 10
+      min_matches: 3          # scans a track must be matched in before it is published
       track_timeout: 0.5      # [s], 5 scans at 10 Hz

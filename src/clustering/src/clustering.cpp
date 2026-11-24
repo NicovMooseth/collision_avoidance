@@ -254,7 +254,12 @@ void updateHistory(LidarObstacle& obstacle, const Measurement& measurement, cons
 }
 
 void updateTime(LidarObstacle& obstacle, const double stamp) {
+    if (obstacle.num_matches == 0) {
+        obstacle.first_seen = stamp;  // first measurement of a new track
+    }
     obstacle.last_seen = stamp;
+    obstacle.lifetime = obstacle.last_seen - obstacle.first_seen;
+    ++obstacle.num_matches;
 }
 
 void updatePlanes(LidarObstacle& obstacle, const std::vector<Eigen::Vector3d>& cluster_points,
@@ -317,6 +322,9 @@ void updateLidarObs(LidarObstacle& obstacle, const std::vector<Eigen::Vector3d>&
     updateTime(obstacle, stamp);
     updatePlanes(obstacle, cluster_points, params);
     updateMotion(obstacle, params);
+    if (static_cast<std::size_t>(obstacle.num_matches) >= std::max<std::size_t>(1, params.min_matches)) {
+        obstacle.confirmed = true;
+    }
 }
 
 // ASSOCIATION

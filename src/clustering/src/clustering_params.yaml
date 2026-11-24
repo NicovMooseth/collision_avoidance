@@ -48,6 +48,13 @@ clustering:
         read_only: true
         validation:
           not_empty<>: null
+      stats:
+        type: string
+        default_value: "/clustering/stats"
+        description: "Tracking statistics per scan: new / matched / deleted tracks, lifetimes (collision_avoidance_msgs/TrackingStats)."
+        read_only: true
+        validation:
+          not_empty<>: null
   state:
     buffer_duration:
       type: double
@@ -92,6 +99,14 @@ clustering:
       read_only: true
       validation:
         gt<>: [0.0]
+  accumulation:
+    num_scans:
+      type: int
+      default_value: 1
+      description: "Number of scans (the current one and the ones before) whose points are clustered together; 1 = current scan only. Points of moving obstacles are not motion compensated, so their clusters are stretched along the motion [-]"
+      read_only: true
+      validation:
+        gt_eq<>: [1]
   map_removal:
     margin:
       type: double
@@ -127,7 +142,7 @@ clustering:
     lidar_frequency:
       type: int
       default_value: 10
-      description: "Frequency of incoming LiDAR scans"
+      description: "Frequency of incoming LiDAR scans; accumulation drops scans older than (num_scans - 0.5) / lidar_frequency [Hz]"
       read_only: true
       validation:
         gt<>: [0]
@@ -152,6 +167,13 @@ clustering:
       read_only: true
       validation:
         gt<>: [0.0]
+    min_matches:
+      type: int
+      default_value: 1
+      description: "A track is confirmed and published only after it was matched in this many scans; unconfirmed tracks are deleted as soon as they miss a scan (reduces flickering obstacles); 1 = publish every cluster [-]"
+      read_only: true
+      validation:
+        gt_eq<>: [1]
     track_timeout:
       type: double
       default_value: 0.5

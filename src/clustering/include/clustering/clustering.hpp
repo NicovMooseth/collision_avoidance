@@ -107,7 +107,12 @@ struct Measurement {
 /// One tracked obstacle (track): its own measurement history and current estimate.
 struct LidarObstacle {
     int ID;
-    double last_seen;                ///< stamp of the last matched measurement [s]
+    double first_seen = 0.0;         ///< stamp of the first measurement, when the track was created [s]
+    double last_seen = 0.0;          ///< stamp of the last matched measurement [s]
+    double lifetime = 0.0;           ///< last_seen - first_seen: how long the track has been followed [s]
+    int num_matches = 0;             ///< measurements matched so far (all, not only those kept in history) [-]
+    bool confirmed = false;          ///< matched in at least ClusteringParams::min_matches scans; only confirmed
+                                     ///< tracks are published, unconfirmed ones are deleted after one missed scan
     int motion;                      ///< 0: static, 1: linear
     std::vector<HalfPlane> planes;   ///< shape of the latest measurement, world frame
     std::deque<Measurement> history; ///< last measurements, oldest first (at most history.num_measurements)
@@ -131,6 +136,7 @@ struct ClusteringParams {
                                             ///< starts a new track [m]
     double known_obstacle_margin = 0.1;     ///< removeKnownPoints: points up to this far outside a map obstacle
                                             ///< count as known (LiDAR noise, odometry drift) [m]
+    std::size_t min_matches = 1;       ///< a track is confirmed once it was matched in this many scans [-]
 };
 
 /// @brief Is p inside the convex region of these half-planes (intersection of their obstacle sides)?
@@ -166,7 +172,8 @@ Eigen::Vector3d avgPoint(const std::vector<Eigen::Vector3d>& points);
 
 /// @brief Update the track with the cluster matched to it in the current scan (or a new track with its first
 ///        cluster): history (updateHistory), last_seen (updateTime), shape (updatePlanes), then velocity and
-///        motion type from the updated history (updateMotion).
+///        motion type from the updated history (updateMotion). Confirms the track once num_matches reaches
+///        params.min_matches (stays confirmed afterwards).
 /// @param obstacle the track
 /// @param cluster_points points of the matched cluster, world frame, at least one
 /// @param stamp scan stamp [s]
@@ -176,7 +183,8 @@ void updateLidarObs(LidarObstacle& obstacle, const std::vector<Eigen::Vector3d>&
 /// @brief Append the measurement and drop the oldest ones beyond params.num_measurements (at least 1 is kept).
 void updateHistory(LidarObstacle& obstacle, const Measurement& measurement, const ClusteringParams& params);
 
-/// @brief last_seen = stamp [s].
+/// @brief last_seen = stamp [s], lifetime = last_seen - first_seen, num_matches + 1.
+///        A new track (num_matches == 0) gets first_seen = stamp.
 void updateTime(LidarObstacle& obstacle, double stamp);
 
 /// @brief planes = box around the cluster (fitAlignedBox): the shape of the latest measurement.

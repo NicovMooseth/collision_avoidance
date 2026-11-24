@@ -119,14 +119,16 @@ collision_avoidance_msgs::msg::LidarObstacleArray toObstacleArray(const std_msgs
     msg.header = header;
     msg.obstacles.reserve(tracks.lidar_obstacles.size());
     for (const clustering::LidarObstacle& track : tracks.lidar_obstacles) {
-        if (track.history.empty()) {
-            continue;
+        if (track.history.empty() || !track.confirmed) {
+            continue;  // unconfirmed tracks are not published
         }
         collision_avoidance_msgs::msg::LidarObstacle obstacle;
         obstacle.id = track.ID;
         obstacle.motion = track.motion == 1 ? collision_avoidance_msgs::msg::LidarObstacle::LINEAR
                                             : collision_avoidance_msgs::msg::LidarObstacle::STATIC;
         obstacle.last_seen = toTimeMsg(track.last_seen);
+        obstacle.lifetime = track.lifetime;
+        obstacle.num_matches = track.num_matches;
         const Eigen::Vector3d& center = track.history.back().center;
         obstacle.center.x = center.x();
         obstacle.center.y = center.y();
@@ -187,8 +189,8 @@ visualization_msgs::msg::MarkerArray toMarkers(const std_msgs::msg::Header& head
     markers.markers.push_back(clear);
 
     for (const clustering::LidarObstacle& track : tracks.lidar_obstacles) {
-        if (track.history.empty()) {
-            continue;
+        if (track.history.empty() || !track.confirmed) {
+            continue;  // unconfirmed tracks are not published
         }
         const bool moving = track.motion == 1;
         const bool seen_now = std::abs(track.last_seen - scan_time) < 1e-6;
@@ -261,6 +263,7 @@ ClusteringNode::ClusteringNode() : Node("clustering_node") {
     clustering_params_.max_static_speed = params_.history.max_static_speed;
     clustering_params_.max_association_distance = params_.history.max_association_distance;
     clustering_params_.known_obstacle_margin = params_.map_removal.margin;
+    clustering_params_.min_matches = static_cast<std::size_t>(params_.history.min_matches);
 
     // sensor -> body extrinsic; fixed_size validation guarantees 9 and 3 entries
     const auto& r = params_.extrinsics.fast_lio_to_body.rotation;
@@ -294,6 +297,8 @@ ClusteringNode::ClusteringNode() : Node("clustering_node") {
     obstacle_pub_ = create_publisher<collision_avoidance_msgs::msg::LidarObstacleArray>(
         params_.topics.output.obstacles, rclcpp::QoS(10));
     marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(params_.topics.output.markers, rclcpp::QoS(10));
+    stats_pub_ = create_publisher<collision_avoidance_msgs::msg::TrackingStats>(params_.topics.output.stats,
+                                                                               rclcpp::QoS(10));
 }
 
 std::optional<Eigen::Isometry3d> ClusteringNode::poseAt(const rclcpp::Time& stamp) const {
@@ -338,25 +343,117 @@ void ClusteringNode::cloudCallback(const sensor_msgs::msg::PointCloud2& cloud) {
     // scan time in seconds
     const double scan_time = rclcpp::Time(cloud.header.stamp).seconds();
 
-    // delete tracks not seen for track_timeout (relative to the scan stamp)
+    // delete tracks not seen for too long (relative to the scan stamp): confirmed ones after track_timeout,
+    // unconfirmed ones as soon as they missed one scan (1.5 scan periods: a little slack for stamp jitter)
     auto& tracks = tracks_.lidar_obstacles;
     const double timeout = params_.history.track_timeout;
-    tracks.erase(std::remove_if(tracks.begin(), tracks.end(),
-                                [&](const LidarObstacle& track) { return scan_time - track.last_seen > timeout; }),
-                 tracks.end());
+    const double tentative_timeout = 1.5 / params_.history.lidar_frequency;
+    auto expired = [&](const LidarObstacle& track) {
+        return scan_time - track.last_seen > (track.confirmed ? timeout : tentative_timeout);
+    };
+    collision_avoidance_msgs::msg::TrackingStats stats;
+    double deleted_lifetime_sum = 0.0;
+    for (const LidarObstacle& track : tracks) {
+        if (!expired(track)) {
+            continue;
+        }
+        if (track.confirmed) {
+            ++stats.num_deleted;
+            deleted_lifetime_sum += track.lifetime;
+        } else {
+            ++stats.num_tentative_dropped;
+        }
+    }
+    stats.mean_lifetime_deleted = stats.num_deleted > 0 ? deleted_lifetime_sum / stats.num_deleted : 0.0;
+    tracks.erase(std::remove_if(tracks.begin(), tracks.end(), expired), tracks.end());
                  
-    // points of known obstacles out, cluster the rest, match the clusters to the tracks
+    // points of known obstacles out
     removeKnownPoints(obstacles_, points, clustering_params_.known_obstacle_margin);
-    const std::vector<int> labels = dbscan_fast(points, clustering_params_);
-    const std::vector<std::vector<Eigen::Vector3d>> clusters = splitClusters(points, labels);
-    const std::vector<int> cluster_track_ids =
+
+    // the last accumulation.num_scans scans together (1: this scan only); everything below (clustering, box fit,
+    // centers, tracking) uses all of them, each point where it was measured
+    const std::vector<Eigen::Vector3d> integrated = integrateScans(scan_time, std::move(points));
+
+    // cluster, match the clusters to the tracks
+    const std::vector<int> labels = dbscan_fast(integrated, clustering_params_);
+    const std::vector<std::vector<Eigen::Vector3d>> clusters = splitClusters(integrated, labels);
+    std::vector<int> cluster_track_ids =
         associateClusters(tracks_, clusters, scan_time, clustering_params_, next_track_id_);
+
+    // tracking statistics of this scan (confirmed tracks, see TrackingStats.msg)
+    stats.num_clusters = static_cast<int>(clusters.size());
+    std::vector<double> lifetimes;
+    lifetimes.reserve(tracks.size());
+    std::vector<int> unconfirmed_ids;
+    for (const LidarObstacle& track : tracks) {
+        if (!track.confirmed) {
+            ++stats.num_tentative;
+            unconfirmed_ids.push_back(track.ID);
+            continue;
+        }
+        const bool matched_now = track.last_seen == scan_time;
+        const bool confirmed_now =
+            matched_now && static_cast<std::size_t>(track.num_matches) ==
+                               std::max<std::size_t>(1, clustering_params_.min_matches);
+        stats.num_new += confirmed_now ? 1 : 0;
+        stats.num_matched += (matched_now && !confirmed_now) ? 1 : 0;
+        stats.num_moving += track.motion == 1 ? 1 : 0;
+        lifetimes.push_back(track.lifetime);
+    }
+    stats.num_tracks = static_cast<int>(lifetimes.size());
+    num_confirmed_total_ += stats.num_new;
+    stats.total_tracks_created = next_track_id_;
+    stats.total_tracks_confirmed = num_confirmed_total_;
+
+    // clusters of unconfirmed tracks keep their points in the cluster cloud, but with track ID -1
+    for (int& id : cluster_track_ids) {
+        if (std::find(unconfirmed_ids.begin(), unconfirmed_ids.end(), id) != unconfirmed_ids.end()) {
+            id = -1;
+        }
+    }
+    if (!lifetimes.empty()) {
+        double sum = 0.0;
+        for (const double lifetime : lifetimes) {
+            sum += lifetime;
+        }
+        stats.mean_lifetime = sum / static_cast<double>(lifetimes.size());
+        stats.max_lifetime = *std::max_element(lifetimes.begin(), lifetimes.end());
+        std::nth_element(lifetimes.begin(), lifetimes.begin() + lifetimes.size() / 2, lifetimes.end());
+        stats.median_lifetime = lifetimes[lifetimes.size() / 2];
+    }
 
     std_msgs::msg::Header header;
     header.stamp = cloud.header.stamp;
     header.frame_id = world_frame_;
-    publishPoints(header, points);  // all points not removed by the map (input of DBSCAN)
+    publishPoints(header, integrated);  // points not removed by the map, all integrated scans (input of DBSCAN)
     publishResults(header, clusters, cluster_track_ids);
+    stats.header = header;
+    stats_pub_->publish(stats);
+}
+
+std::vector<Eigen::Vector3d> ClusteringNode::integrateScans(const double scan_time,
+                                                            std::vector<Eigen::Vector3d> points) {
+    if (!scan_buffer_.empty() && scan_buffer_.back().first > scan_time) {
+        scan_buffer_.clear();  // time jumped back (bag restarted): the old scans do not belong to this one
+    }
+    scan_buffer_.emplace_back(scan_time, std::move(points));
+
+    const auto num_scans = static_cast<std::size_t>(params_.accumulation.num_scans);
+    const double max_age = (static_cast<double>(num_scans) - 0.5) / params_.history.lidar_frequency;
+    while (scan_buffer_.size() > num_scans || scan_time - scan_buffer_.front().first > max_age) {
+        scan_buffer_.pop_front();  // never the current scan: its age is 0
+    }
+
+    std::size_t total = 0;
+    for (const auto& scan : scan_buffer_) {
+        total += scan.second.size();
+    }
+    std::vector<Eigen::Vector3d> integrated;
+    integrated.reserve(total);
+    for (const auto& scan : scan_buffer_) {
+        integrated.insert(integrated.end(), scan.second.begin(), scan.second.end());
+    }
+    return integrated;
 }
 
 void ClusteringNode::publishPoints(const std_msgs::msg::Header& header, const std::vector<Eigen::Vector3d>& points) {

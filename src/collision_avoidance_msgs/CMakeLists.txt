@@ -14,6 +14,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/HalfPlaneArray.msg"
   "msg/LidarObstacle.msg"
   "msg/LidarObstacleArray.msg"
+  "msg/TrackingStats.msg"
   DEPENDENCIES std_msgs shape_msgs geometry_msgs builtin_interfaces
 )
 
