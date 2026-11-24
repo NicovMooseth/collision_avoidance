@@ -129,20 +129,22 @@ struct ClusteringParams {
     double max_static_speed = 0.3;     ///< tracks slower than this count as static [m/s]
     double max_association_distance = 0.5;  ///< a cluster further than this from every predicted track center
                                             ///< starts a new track [m]
+    double known_obstacle_margin = 0.1;     ///< removeKnownPoints: points up to this far outside a map obstacle
+                                            ///< count as known (LiDAR noise, odometry drift) [m]
 };
 
 /// @brief Is p inside the convex region of these half-planes (intersection of their obstacle sides)?
 ///        eps [m] inflates the region: points up to eps outside it count as inside.
-bool insideObstacle(const std::vector<HalfPlane>& planes, const Eigen::Vector3d& p, double eps = 1e-3);
+bool insideObstacle(const std::vector<HalfPlane>& planes, const Eigen::Vector3d& p, double eps);
 
 /// @brief Is p inside the obstacle (insideObstacle of its planes)?
 ///        For a moving LidarObstacle the planes are tested as stored, i.e. where it was when they were computed.
-bool insideObstacle(const MapObstacle& obstacle, const Eigen::Vector3d& p, double eps = 1e-3);
-bool insideObstacle(const LidarObstacle& obstacle, const Eigen::Vector3d& p, double eps = 1e-3);
+bool insideObstacle(const MapObstacle& obstacle, const Eigen::Vector3d& p, double eps);
+bool insideObstacle(const LidarObstacle& obstacle, const Eigen::Vector3d& p, double eps);
 
 /// @brief Is p inside any of the obstacles (insideObstacle)?
-bool insideAnyObstacle(const MapObstacles& obstacles, const Eigen::Vector3d& p, double eps = 1e-3);
-bool insideAnyObstacle(const LidarObstacles& obstacles, const Eigen::Vector3d& p, double eps = 1e-3);
+bool insideAnyObstacle(const MapObstacles& obstacles, const Eigen::Vector3d& p, double eps);
+bool insideAnyObstacle(const LidarObstacles& obstacles, const Eigen::Vector3d& p, double eps);
 
 /// @brief Convex hull of 2D points (Andrew's monotone chain), counter-clockwise, first point not repeated.
 ///        Collinear points on the edges and duplicates are dropped. Fewer than 3 distinct points: returns them
@@ -186,8 +188,11 @@ void updatePlanes(LidarObstacle& obstacle, const std::vector<Eigen::Vector3d>& c
 ///        measurements, or all at the same time: v = 0, motion = 0.
 void updateMotion(LidarObstacle& obstacle, const ClusteringParams& params);
 
-/// @brief Remove the points that lie inside any known obstacle (in place).
-void removeKnownPoints(const MapObstacles& obstacles, std::vector<Eigen::Vector3d>& points);
+/// @brief Remove the points that lie inside any known obstacle, or up to margin outside it (in place).
+///        The margin moves every plane of an obstacle outwards by margin (insideObstacle eps), so it covers
+///        points on the surface that scatter to its free side (LiDAR noise, odometry drift).
+/// @param margin [m], >= 0
+void removeKnownPoints(const MapObstacles& obstacles, std::vector<Eigen::Vector3d>& points, double margin);
 
 /// @brief DBSCAN: the label of each point, NOISE (0) or a cluster id (1, 2, ...).
 ///        params.eps [m]: neighbourhood radius; params.min_points: neighbours of a core point, itself included.

@@ -60,12 +60,12 @@ bool insideAnyObstacle(const LidarObstacles& obstacles, const Eigen::Vector3d& p
     return insideAny(obstacles.lidar_obstacles, p, eps);
 }
 
-void removeKnownPoints(const MapObstacles& obstacles, std::vector<Eigen::Vector3d>& points) {
+void removeKnownPoints(const MapObstacles& obstacles, std::vector<Eigen::Vector3d>& points, const double margin) {
     int origin_size = points.size();
     std::cout << origin_size << " original size" << '\n';
     points.erase(std::remove_if(points.begin(), points.end(),
                                 [&](const Eigen::Vector3d& p) {
-                                    return insideAnyObstacle(obstacles, p);
+                                    return insideAnyObstacle(obstacles, p, margin);
                                 }),
                 points.end());
     std::cout << origin_size - points.size() << " points removed" << '\n';

@@ -26,13 +26,21 @@ clustering_node:
            0.99999986, -0.00052343, -0.00001343,
            0.00052360,  0.99967076,  0.02565352]
            
+    # distance to the LiDAR, as in scan_to_constraint; min drops the no-echo points at (0, 0, 0)
+    range:
+      min: 0.3
+      max: 30.0
+
+    map_removal:
+      margin: 0.1   # [m], points this close outside a map obstacle are removed too
+
     dbscan:
-      eps: 0.3
+      eps: 0.1
       min_points: 15
     
     history:
       num_measurements: 5     # per track
       min_measurements: 3     # before the velocity is estimated
-      max_static_speed: 0.1   # [m/s], slower tracks are static
+      max_static_speed: 0.5   # [m/s], slower tracks are static
       lidar_frequency: 10
       track_timeout: 0.5      # [s], 5 scans at 10 Hz

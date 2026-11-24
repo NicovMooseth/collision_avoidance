@@ -77,10 +77,33 @@ clustering:
         read_only: true
         validation:
           fixed_size<>: [9]
+  range:
+    min:
+      type: double
+      default_value: 0.3
+      description: "Points closer than this to the LiDAR are dropped: returns without echo, sent as (0, 0, 0), and hits on the drone itself [m]"
+      read_only: true
+      validation:
+        gt_eq<>: [0.0]
+    max:
+      type: double
+      default_value: 30.0
+      description: "Points farther than this from the LiDAR are dropped [m]"
+      read_only: true
+      validation:
+        gt<>: [0.0]
+  map_removal:
+    margin:
+      type: double
+      default_value: 0.1
+      description: "Points up to this far outside an obstacle of the offline map count as known and are removed before clustering (LiDAR noise, odometry drift) [m]"
+      read_only: true
+      validation:
+        gt_eq<>: [0.0]
   dbscan:
     eps:
       type: double
-      default_value: 0.3
+      default_value: 0.1
       description: "Epsilon for DBSCAN clustering"
       read_only: true
       validation:
@@ -117,7 +140,7 @@ clustering:
         gt<>: [0]
     max_static_speed:
       type: double
-      default_value: 0.1
+      default_value: 0.5
       description: "Tracks with an estimated speed up to this count as static (v = 0) [m/s]"
       read_only: true
       validation:

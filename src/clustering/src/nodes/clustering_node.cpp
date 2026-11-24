@@ -25,14 +25,25 @@ std::string resolveMapPath(const std::string& path) {
     return (std::filesystem::path(ament_index_cpp::get_package_share_directory("map_obstacles")) / p).string();
 }
 
-/// @brief The finite points of the cloud, in the frame of the cloud (sensor frame).
-std::vector<Eigen::Vector3d> cloudToPoints(const sensor_msgs::msg::PointCloud2& cloud) {
+/// @brief The finite points of the cloud with a range in [min_range, max_range], in the frame of the cloud
+///        (sensor frame, so the range is the distance to the LiDAR). The minimum range drops the returns without
+///        echo, which the driver sends as (0, 0, 0) (about 2 % of each scan in the office bag), and hits on the
+///        drone itself.
+std::vector<Eigen::Vector3d> cloudToPoints(const sensor_msgs::msg::PointCloud2& cloud, const double min_range,
+                                          const double max_range) {
+    const double min_squared = min_range * min_range;
+    const double max_squared = max_range * max_range;
     std::vector<Eigen::Vector3d> points;
     points.reserve(static_cast<std::size_t>(cloud.width) * cloud.height);
     sensor_msgs::PointCloud2ConstIterator<float> x(cloud, "x"), y(cloud, "y"), z(cloud, "z");
     for (; x != x.end(); ++x, ++y, ++z) {
-        if (std::isfinite(*x) && std::isfinite(*y) && std::isfinite(*z)) {
-            points.emplace_back(*x, *y, *z);
+        if (!std::isfinite(*x) || !std::isfinite(*y) || !std::isfinite(*z)) {
+            continue;
+        }
+        const Eigen::Vector3d p(*x, *y, *z);
+        const double range_squared = p.squaredNorm();
+        if (range_squared >= min_squared && range_squared <= max_squared) {
+            points.push_back(p);
         }
     }
     return points;
@@ -249,6 +260,7 @@ ClusteringNode::ClusteringNode() : Node("clustering_node") {
     clustering_params_.min_measurements = static_cast<std::size_t>(params_.history.min_measurements);
     clustering_params_.max_static_speed = params_.history.max_static_speed;
     clustering_params_.max_association_distance = params_.history.max_association_distance;
+    clustering_params_.known_obstacle_margin = params_.map_removal.margin;
 
     // sensor -> body extrinsic; fixed_size validation guarantees 9 and 3 entries
     const auto& r = params_.extrinsics.fast_lio_to_body.rotation;
@@ -320,7 +332,7 @@ void ClusteringNode::cloudCallback(const sensor_msgs::msg::PointCloud2& cloud) {
         return;
     }
 
-    std::vector<Eigen::Vector3d> points = cloudToPoints(cloud);
+    std::vector<Eigen::Vector3d> points = cloudToPoints(cloud, params_.range.min, params_.range.max);
     transformToWorld(points, *T_WB); // transform to world frame
 
     // scan time in seconds
@@ -334,7 +346,7 @@ void ClusteringNode::cloudCallback(const sensor_msgs::msg::PointCloud2& cloud) {
                  tracks.end());
                  
     // points of known obstacles out, cluster the rest, match the clusters to the tracks
-    removeKnownPoints(obstacles_, points);
+    removeKnownPoints(obstacles_, points, clustering_params_.known_obstacle_margin);
     const std::vector<int> labels = dbscan_fast(points, clustering_params_);
     const std::vector<std::vector<Eigen::Vector3d>> clusters = splitClusters(points, labels);
     const std::vector<int> cluster_track_ids =
