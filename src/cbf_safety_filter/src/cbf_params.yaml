@@ -44,7 +44,7 @@ cbf:
 
     T_REACTION: 
       type: double
-      default_value: 0.13
+      default_value: 0.4
       description: "Simplified input delay of the drone [s]"
       validation:
         gt<>: [0.0]
@@ -125,7 +125,7 @@ cbf:
 
   map_path:
     type: string
-    default_value: "maps/2026-10-20_13-24_Office2_obstacles.csv"
+    default_value: "maps/PLANE_AT_6.csv"
     description: "CSV file with the obstacles of the offline map (header nx,ny,nz,offset,obstacle; one half-plane per row, rows with the same obstacle ID form one convex obstacle; free side n·p + offset >= 0, map frame, n facing the free side (out of the obstacle)). Obstacles that are not closed are dropped. A relative path is relative to the share directory of map_obstacles (its maps/ folder is installed there), an absolute path is used as it is."
     read_only: true
     validation:

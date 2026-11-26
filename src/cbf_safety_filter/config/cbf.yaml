@@ -14,7 +14,7 @@ cbf_node:
 
     barrier_function:
       R_SAFETY: 1.0
-      T_REACTION: 0.13
+      T_REACTION: 0.4
       ALPHA: 1.0
       MAX_TILT: 0.2618 # 15 deg
       MAX_V_Z: 6.0
@@ -31,4 +31,4 @@ cbf_node:
       TAU_CMD: 0.08
       INPUT_DELAY_SEC: 0.10
 
-    map_path: "maps/Office2_new_lidar_obstacles.csv"  # relative to share/map_obstacles
+    map_path: "maps/PLANE_AT_6.csv"  # relative to share/map_obstacles
